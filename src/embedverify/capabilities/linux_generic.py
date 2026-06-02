@@ -263,6 +263,7 @@ def _parse_lsusb(
     pattern = re.compile(
         r"Bus\s+(\d+)\s+Device\s+(\d+):\s+ID\s+([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\s+(.*)"
     )
+    speed_by_device = _speed_map_from_tree(tree)
     devices: list[dict[str, Any]] = []
     for line in listing.splitlines():
         match = pattern.match(line.strip())
@@ -272,7 +273,7 @@ def _parse_lsusb(
         device = int(match.group(2))
         vid = match.group(3).lower()
         pid = match.group(4).lower()
-        speed = _speed_for_bus(tree, bus)
+        speed = speed_by_device.get((bus, device), "unknown")
         if bus_type == "usb2" and speed not in ("480M", "12M", "1.5M", "unknown"):
             continue
         if bus_type == "usb3" and speed not in ("5G", "10G", "20G", "unknown"):
@@ -294,20 +295,35 @@ def _parse_lsusb(
     return devices
 
 
-def _speed_for_bus(tree: str, bus: int) -> str:
-    bus_pattern = re.compile(rf"Bus\s+{bus:02d}\.")
+def _speed_map_from_tree(tree: str) -> dict[tuple[int, int], str]:
+    speeds: dict[tuple[int, int], str] = {}
+    current_bus: int | None = None
     for line in tree.splitlines():
-        if bus_pattern.search(line) or f"Bus {bus}" in line:
-            for marker, speed in (
-                ("20000M", "20G"),
-                ("10000M", "10G"),
-                ("5000M", "5G"),
-                ("480M", "480M"),
-                ("12M", "12M"),
-                ("1.5M", "1.5M"),
-            ):
-                if marker in line:
-                    return speed
+        bus_match = re.search(r"Bus\s+(\d+)", line)
+        if bus_match:
+            current_bus = int(bus_match.group(1))
+        if current_bus is None:
+            continue
+        dev_match = re.search(r"Dev\s+(\d+)", line)
+        if not dev_match:
+            continue
+        speed = _speed_from_tree_line(line)
+        if speed != "unknown":
+            speeds[(current_bus, int(dev_match.group(1)))] = speed
+    return speeds
+
+
+def _speed_from_tree_line(line: str) -> str:
+    for marker, speed in (
+        ("20000M", "20G"),
+        ("10000M", "10G"),
+        ("5000M", "5G"),
+        ("480M", "480M"),
+        ("12M", "12M"),
+        ("1.5M", "1.5M"),
+    ):
+        if marker in line:
+            return speed
     return "unknown"
 
 
@@ -366,4 +382,3 @@ def _sum_sizes(devices: list[dict[str, Any]]) -> int:
         except (TypeError, ValueError):
             pass
     return total
-
