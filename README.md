@@ -1,4 +1,4 @@
-# Hardware Interface Verify
+# EmbedVerify
 
 Platform-neutral hardware interface verification MVP.
 
