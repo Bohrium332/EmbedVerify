@@ -1,0 +1,8 @@
+name: usb_smoke
+description: Generic USB Host + USB storage smoke suite.
+board: recomputer_j401
+execution: sequential
+report_enabled: true
+cases:
+  - cases/usb_host_storage.yaml
+

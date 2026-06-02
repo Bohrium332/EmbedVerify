@@ -1,0 +1,26 @@
+name: recomputer_j401
+platform: linux
+adapter: jetson
+capabilities:
+  usb: linux_generic
+  storage: linux_generic
+  system_info: jetson
+interfaces:
+  usb:
+    items:
+      - usb_host_0
+      - usb_host_1
+  storage:
+    items:
+      - /dev/sda
+tools_required:
+  - lsusb
+  - lsblk
+  - findmnt
+  - dd
+  - hdparm
+metadata:
+  vendor: Seeed
+  family: Jetson
+  first_supported_suite: usb_smoke
+

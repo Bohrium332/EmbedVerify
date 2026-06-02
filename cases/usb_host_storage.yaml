@@ -1,0 +1,53 @@
+name: usb_host_storage
+description: USB Host enumeration and mounted USB storage speed smoke test.
+module: usb
+execution: sequential
+functions:
+  - name: usb.detect
+    params:
+      bus_type: any
+      expected_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: status
+          operator: eq
+          value: passed
+          message: USB device must be detected
+
+  - name: storage.info
+    params:
+      mount_point: /media/seeed/USB_TEST
+    expect:
+      pass_policy: all
+      rules:
+        - field: metrics.device_count
+          operator: gt
+          value: 0
+          message: Storage device information must be available
+
+  - name: storage.read_speed
+    params:
+      device: /dev/sda
+      min_speed_mbps: 0
+    expect:
+      pass_policy: all
+      rules:
+        - field: metrics.read_speed_mbps
+          operator: gt
+          value: 0
+          message: USB storage read speed must be positive
+
+  - name: storage.write_speed
+    params:
+      mount_point: /media/seeed/USB_TEST
+      file_size_mb: 256
+      min_speed_mbps: 0
+    expect:
+      pass_policy: all
+      rules:
+        - field: metrics.write_speed_mbps
+          operator: gt
+          value: 0
+          message: USB storage write speed must be positive
+

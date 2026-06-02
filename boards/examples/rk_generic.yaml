@@ -1,0 +1,23 @@
+name: rk_generic
+platform: linux
+adapter: rk
+capabilities:
+  usb: linux_generic
+  storage: linux_generic
+  system_info: rk
+interfaces:
+  usb:
+    items:
+      - usb_host_0
+  storage:
+    items:
+      - /dev/sda
+tools_required:
+  - lsusb
+  - lsblk
+  - findmnt
+  - dd
+metadata:
+  vendor: generic
+  family: rk
+

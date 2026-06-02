@@ -1,0 +1,24 @@
+name: jetson_generic
+platform: linux
+adapter: jetson
+capabilities:
+  usb: linux_generic
+  storage: linux_generic
+  system_info: jetson
+interfaces:
+  usb:
+    items:
+      - usb_host_0
+  storage:
+    items:
+      - /dev/sda
+tools_required:
+  - lsusb
+  - lsblk
+  - findmnt
+  - dd
+  - hdparm
+metadata:
+  vendor: generic
+  family: jetson
+
