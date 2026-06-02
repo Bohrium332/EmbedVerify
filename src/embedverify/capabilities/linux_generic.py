@@ -74,10 +74,15 @@ class GenericStorageCapability:
         if not shutil.which("lsblk"):
             return _failed(-2, "lsblk not found: install util-linux", {"tool": "lsblk"})
 
-        resolved_device = device
-        if mount_point and not resolved_device:
+        discovery = self.discover_usb_storage(timeout=timeout)
+        resolved_device = "" if device == "auto" else device
+        resolved_mount = "" if mount_point == "auto" else mount_point
+        if not resolved_device and not resolved_mount and discovery:
+            resolved_device = str(discovery.get("disk") or "")
+            resolved_mount = str(discovery.get("mount_point") or "")
+        if resolved_mount and not resolved_device:
             try:
-                result = self.runner(["findmnt", "-n", "-o", "SOURCE", mount_point], 5)
+                result = self.runner(["findmnt", "-n", "-o", "SOURCE", resolved_mount], 5)
                 if result.returncode == 0:
                     resolved_device = result.stdout.strip()
             except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -88,7 +93,7 @@ class GenericStorageCapability:
             "--bytes",
             "--json",
             "-o",
-            "NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,VENDOR,ROTA,TRAN",
+            "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,VENDOR,ROTA,TRAN",
         ]
         if resolved_device:
             cmd.append(resolved_device)
@@ -120,7 +125,8 @@ class GenericStorageCapability:
             "message": f"found {len(devices)} storage device(s)",
             "details": {
                 "device": resolved_device,
-                "mount_point": mount_point,
+                "mount_point": resolved_mount,
+                "discovery": discovery,
                 "blockdevices": devices,
             },
             "metrics": {
@@ -133,23 +139,28 @@ class GenericStorageCapability:
     def read_speed(
         self,
         *,
-        device: str,
+        device: str = "auto",
         method: str = "auto",
         min_speed_mbps: float = 0,
         timeout: int = 120,
     ) -> dict[str, Any]:
         """Measure read speed from a block device."""
 
-        if not device:
-            return _failed(-1, "device is required", {})
-        if not Path(device).exists():
-            return _failed(-1, "storage device not found", {"device": device})
+        discovery: dict[str, Any] | None = None
+        resolved_device = "" if device == "auto" else device
+        if not resolved_device:
+            discovery = self.discover_usb_storage(timeout=10)
+            resolved_device = str((discovery or {}).get("disk") or "")
+        if not resolved_device:
+            return _failed(-1, "USB storage device is required but was not auto-detected", {})
+        if not Path(resolved_device).exists():
+            return _failed(-1, "storage device not found", {"device": resolved_device})
 
         speed_mbps = 0.0
         method_used = ""
         if method in ("auto", "hdparm") and shutil.which("hdparm"):
             try:
-                result = self.runner(["hdparm", "-t", device], timeout)
+                result = self.runner(["hdparm", "-t", resolved_device], timeout)
                 if result.returncode == 0:
                     match = re.search(r"=\s*([\d.]+)\s*MB/sec", result.stdout)
                     if match:
@@ -163,11 +174,11 @@ class GenericStorageCapability:
                 return _failed(-2, "dd not found: install coreutils", {"tool": "dd"})
             try:
                 result = self.runner(
-                    ["dd", f"if={device}", "of=/dev/null", "bs=1M", "count=256", "iflag=direct"],
+                    ["dd", f"if={resolved_device}", "of=/dev/null", "bs=1M", "count=256", "iflag=direct"],
                     timeout,
                 )
             except subprocess.TimeoutExpired:
-                return _failed(-1, "storage read test timed out", {"device": device})
+                return _failed(-1, "storage read test timed out", {"device": resolved_device})
             if result.returncode == 0:
                 speed_mbps = _parse_dd_speed(result.stderr)
                 if speed_mbps > 0:
@@ -183,9 +194,10 @@ class GenericStorageCapability:
                 else f"read speed {speed_mbps:.1f} MB/s below threshold {min_speed_mbps} MB/s"
             ),
             "details": {
-                "device": device,
+                "device": resolved_device,
                 "method_used": method_used,
                 "min_speed_mbps": min_speed_mbps,
+                "discovery": discovery,
             },
             "metrics": {"read_speed_mbps": round(speed_mbps, 2)},
         }
@@ -193,7 +205,7 @@ class GenericStorageCapability:
     def write_speed(
         self,
         *,
-        mount_point: str,
+        mount_point: str = "auto",
         file_size_mb: int = 256,
         min_speed_mbps: float = 0,
         timeout: int = 120,
@@ -202,12 +214,24 @@ class GenericStorageCapability:
 
         if not shutil.which("dd"):
             return _failed(-2, "dd not found: install coreutils", {"tool": "dd"})
-        if not mount_point:
-            return _failed(-1, "mount_point is required", {})
-        if not os.path.ismount(mount_point):
-            return _failed(-1, "mount point is not mounted", {"mount_point": mount_point})
+        discovery: dict[str, Any] | None = None
+        auto_mounted = False
+        resolved_mount = "" if mount_point == "auto" else mount_point
+        if not resolved_mount:
+            discovery = self.discover_usb_storage(timeout=10)
+            resolved_mount = str((discovery or {}).get("mount_point") or "")
+        if not resolved_mount:
+            if not discovery:
+                discovery = self.discover_usb_storage(timeout=10)
+            mount_result = self._auto_mount_usb_storage(discovery)
+            if mount_result.get("status") != "passed":
+                return mount_result
+            resolved_mount = str(mount_result["details"]["mount_point"])
+            auto_mounted = True
+        if not os.path.ismount(resolved_mount):
+            return _failed(-1, "mount point is not mounted", {"mount_point": resolved_mount})
 
-        test_file = str(Path(mount_point) / ".ev_write_test.bin")
+        test_file = str(Path(resolved_mount) / ".ev_write_test.bin")
         try:
             result = self.runner(
                 [
@@ -222,12 +246,14 @@ class GenericStorageCapability:
                 timeout,
             )
         except subprocess.TimeoutExpired:
-            return _failed(-1, "storage write test timed out", {"mount_point": mount_point})
+            return _failed(-1, "storage write test timed out", {"mount_point": resolved_mount})
         finally:
             try:
                 os.remove(test_file)
             except OSError:
                 pass
+            if auto_mounted:
+                self._umount(resolved_mount)
 
         speed_mbps = _parse_dd_speed(result.stderr)
         success = speed_mbps > 0 and (min_speed_mbps <= 0 or speed_mbps >= min_speed_mbps)
@@ -240,17 +266,138 @@ class GenericStorageCapability:
                 else f"write speed {speed_mbps:.1f} MB/s below threshold {min_speed_mbps} MB/s"
             ),
             "details": {
-                "mount_point": mount_point,
+                "mount_point": resolved_mount,
                 "file_size_mb": file_size_mb,
                 "min_speed_mbps": min_speed_mbps,
                 "exit_code": result.returncode,
+                "auto_mounted": auto_mounted,
+                "discovery": discovery,
             },
             "metrics": {"write_speed_mbps": round(speed_mbps, 2)},
         }
 
+    def discover_usb_storage(self, *, timeout: int = 10) -> dict[str, Any] | None:
+        """Discover the first USB storage disk and preferred partition."""
+
+        if not shutil.which("lsblk"):
+            return None
+        try:
+            result = self.runner(
+                [
+                    "lsblk",
+                    "--bytes",
+                    "--json",
+                    "-o",
+                    "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,VENDOR,TRAN",
+                ],
+                timeout,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return None
+        devices = data.get("blockdevices", [])
+        if not isinstance(devices, list):
+            return None
+        return _select_usb_storage(devices)
+
+    def _auto_mount_usb_storage(self, discovery: dict[str, Any] | None) -> dict[str, Any]:
+        if not discovery:
+            return _failed(-1, "USB storage partition was not auto-detected", {})
+        partition = str(discovery.get("partition") or "")
+        if not partition:
+            return _failed(-1, "USB storage partition was not auto-detected", {"discovery": discovery})
+        if os.geteuid() != 0:
+            return _failed(
+                -1,
+                "USB storage is not mounted and auto-mount requires root",
+                {"partition": partition},
+            )
+        mount_point = f"/mnt/embedverify-{Path(partition).name}"
+        os.makedirs(mount_point, exist_ok=True)
+        try:
+            result = self.runner(["mount", partition, mount_point], 10)
+        except subprocess.TimeoutExpired:
+            return _failed(-1, "USB storage auto-mount timed out", {"partition": partition})
+        if result.returncode != 0:
+            return _failed(
+                -1,
+                result.stderr.strip() or "USB storage auto-mount failed",
+                {"partition": partition, "mount_point": mount_point, "exit_code": result.returncode},
+            )
+        return {
+            "code": 0,
+            "status": "passed",
+            "message": f"auto-mounted USB storage at {mount_point}",
+            "details": {"partition": partition, "mount_point": mount_point},
+            "metrics": {},
+        }
+
+    def _umount(self, mount_point: str) -> None:
+        try:
+            self.runner(["umount", mount_point], 10)
+        except Exception:
+            pass
+
 
 def _failed(code: int, message: str, details: dict[str, Any]) -> dict[str, Any]:
     return {"code": code, "status": "failed", "message": message, "details": details, "metrics": {}}
+
+
+def _select_usb_storage(devices: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for disk in devices:
+        if disk.get("type") != "disk" or disk.get("tran") != "usb":
+            continue
+        disk_path = _node_path(disk)
+        children = disk.get("children") or []
+        partition_info = _select_partition(children)
+        if partition_info is None:
+            return {
+                "disk": disk_path,
+                "partition": "",
+                "mount_point": "",
+                "model": disk.get("model"),
+                "serial": disk.get("serial"),
+                "vendor": disk.get("vendor"),
+                "size": disk.get("size"),
+            }
+        return {
+            "disk": disk_path,
+            "partition": partition_info["path"],
+            "mount_point": partition_info["mount_point"],
+            "fstype": partition_info["fstype"],
+            "model": disk.get("model"),
+            "serial": disk.get("serial"),
+            "vendor": disk.get("vendor"),
+            "size": disk.get("size"),
+        }
+    return None
+
+
+def _select_partition(children: list[dict[str, Any]]) -> dict[str, Any] | None:
+    partitions = [child for child in children if child.get("type") == "part"]
+    mounted = [part for part in partitions if part.get("mountpoint")]
+    candidates = mounted or partitions
+    if not candidates:
+        return None
+    part = candidates[0]
+    return {
+        "path": _node_path(part),
+        "mount_point": part.get("mountpoint") or "",
+        "fstype": part.get("fstype") or "",
+    }
+
+
+def _node_path(node: dict[str, Any]) -> str:
+    path = node.get("path")
+    if isinstance(path, str) and path:
+        return path
+    name = str(node.get("name") or "")
+    return f"/dev/{name}" if name else ""
 
 
 def _parse_lsusb(

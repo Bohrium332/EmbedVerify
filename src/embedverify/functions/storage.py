@@ -22,7 +22,7 @@ def info(
 
 def read_speed(
     *,
-    device: str,
+    device: str = "auto",
     method: str = "auto",
     min_speed_mbps: float = 0,
     timeout: int = 120,
@@ -43,7 +43,7 @@ def read_speed(
 
 def write_speed(
     *,
-    mount_point: str,
+    mount_point: str = "auto",
     file_size_mb: int = 256,
     min_speed_mbps: float = 0,
     timeout: int = 120,
@@ -73,4 +73,3 @@ def _storage_cap(capability_registry: dict[str, Any] | None) -> Any:
             "metrics": {},
         }
     return cap
-

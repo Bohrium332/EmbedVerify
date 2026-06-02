@@ -1,6 +1,6 @@
 import unittest
 
-from embedverify.capabilities.linux_generic import _parse_lsusb
+from embedverify.capabilities.linux_generic import _parse_lsusb, _select_usb_storage
 
 
 class LinuxGenericUSBTests(unittest.TestCase):
@@ -25,7 +25,70 @@ class LinuxGenericUSBTests(unittest.TestCase):
         self.assertEqual(devices[0]["speed"], "5G")
         self.assertEqual(devices[1]["speed"], "10G")
 
+    def test_select_usb_storage_prefers_mounted_partition(self):
+        devices = [
+            {
+                "name": "nvme0n1",
+                "path": "/dev/nvme0n1",
+                "type": "disk",
+                "tran": "nvme",
+            },
+            {
+                "name": "sda",
+                "path": "/dev/sda",
+                "type": "disk",
+                "tran": "usb",
+                "model": "DataTraveler 3.0",
+                "children": [
+                    {
+                        "name": "sda1",
+                        "path": "/dev/sda1",
+                        "type": "part",
+                        "fstype": "vfat",
+                        "mountpoint": "",
+                    },
+                    {
+                        "name": "sda2",
+                        "path": "/dev/sda2",
+                        "type": "part",
+                        "fstype": "ext4",
+                        "mountpoint": "/media/usb",
+                    },
+                ],
+            },
+        ]
+
+        selected = _select_usb_storage(devices)
+
+        self.assertEqual(selected["disk"], "/dev/sda")
+        self.assertEqual(selected["partition"], "/dev/sda2")
+        self.assertEqual(selected["mount_point"], "/media/usb")
+
+    def test_select_usb_storage_returns_unmounted_partition(self):
+        devices = [
+            {
+                "name": "sda",
+                "path": "/dev/sda",
+                "type": "disk",
+                "tran": "usb",
+                "children": [
+                    {
+                        "name": "sda1",
+                        "path": "/dev/sda1",
+                        "type": "part",
+                        "fstype": "vfat",
+                        "mountpoint": None,
+                    }
+                ],
+            }
+        ]
+
+        selected = _select_usb_storage(devices)
+
+        self.assertEqual(selected["disk"], "/dev/sda")
+        self.assertEqual(selected["partition"], "/dev/sda1")
+        self.assertEqual(selected["mount_point"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -36,13 +36,22 @@ source .venv/bin/activate
 pip install -e .
 
 ev run suites/usb_smoke.yaml \
+  --board recomputer_j401
+```
+
+The runner auto-detects the first USB storage device. If the selected partition
+is not mounted and the command is running as root, the write-speed test mounts it
+temporarily under `/mnt/embedverify-*`, writes `.ev_write_test.bin`, removes the
+file, and unmounts it after the test.
+
+Manual overrides are still available:
+
+```bash
+ev run suites/usb_smoke.yaml \
   --board recomputer_j401 \
   --storage-device /dev/sda \
   --mount-point /media/seeed/USB_TEST
 ```
-
-The write-speed test creates `.ev_write_test.bin` inside the mount point and
-removes it after the test.
 
 ## Target Dependencies
 
@@ -59,13 +68,13 @@ Or use the helper script from the repository root:
 scripts/bootstrap_target.sh
 ```
 
-Run the USB smoke suite with defaults:
+Run the USB smoke suite with auto-discovery:
 
 ```bash
 scripts/run_usb_smoke.sh
 ```
 
-Override the detected device and mount point:
+Override the detected device and mount point when needed:
 
 ```bash
 STORAGE_DEVICE=/dev/sdb MOUNT_POINT=/media/seeed/MY_USB scripts/run_usb_smoke.sh

@@ -16,8 +16,7 @@ functions:
           message: USB device must be detected
 
   - name: storage.info
-    params:
-      mount_point: /media/seeed/USB_TEST
+    params: {}
     expect:
       pass_policy: all
       rules:
@@ -28,7 +27,7 @@ functions:
 
   - name: storage.read_speed
     params:
-      device: /dev/sda
+      device: auto
       min_speed_mbps: 0
     expect:
       pass_policy: all
@@ -40,7 +39,7 @@ functions:
 
   - name: storage.write_speed
     params:
-      mount_point: /media/seeed/USB_TEST
+      mount_point: auto
       file_size_mb: 256
       min_speed_mbps: 0
     expect:
@@ -50,4 +49,3 @@ functions:
           operator: gt
           value: 0
           message: USB storage write speed must be positive
-
