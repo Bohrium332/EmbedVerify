@@ -44,7 +44,6 @@ class GenericUSBCapability:
         success = len(devices) >= expected_count
         return {
             "code": 0 if success else -1,
-            "status": "passed" if success else "failed",
             "message": (
                 f"found {len(devices)} USB device(s)"
                 if success
@@ -121,7 +120,6 @@ class GenericStorageCapability:
 
         return {
             "code": 0,
-            "status": "passed",
             "message": f"found {len(devices)} storage device(s)",
             "details": {
                 "device": resolved_device,
@@ -187,7 +185,6 @@ class GenericStorageCapability:
         success = speed_mbps > 0 and (min_speed_mbps <= 0 or speed_mbps >= min_speed_mbps)
         return {
             "code": 0 if success else -1,
-            "status": "passed" if success else "failed",
             "message": (
                 f"read speed: {speed_mbps:.1f} MB/s ({method_used})"
                 if success
@@ -224,7 +221,7 @@ class GenericStorageCapability:
             if not discovery:
                 discovery = self.discover_usb_storage(timeout=10)
             mount_result = self._auto_mount_usb_storage(discovery)
-            if mount_result.get("status") != "passed":
+            if mount_result.get("code") != 0:
                 return mount_result
             resolved_mount = str(mount_result["details"]["mount_point"])
             auto_mounted = True
@@ -259,7 +256,6 @@ class GenericStorageCapability:
         success = speed_mbps > 0 and (min_speed_mbps <= 0 or speed_mbps >= min_speed_mbps)
         return {
             "code": 0 if success else -1,
-            "status": "passed" if success else "failed",
             "message": (
                 f"write speed: {speed_mbps:.1f} MB/s"
                 if success
@@ -331,7 +327,6 @@ class GenericStorageCapability:
             )
         return {
             "code": 0,
-            "status": "passed",
             "message": f"auto-mounted USB storage at {mount_point}",
             "details": {"partition": partition, "mount_point": mount_point},
             "metrics": {},
@@ -345,7 +340,7 @@ class GenericStorageCapability:
 
 
 def _failed(code: int, message: str, details: dict[str, Any]) -> dict[str, Any]:
-    return {"code": code, "status": "failed", "message": message, "details": details, "metrics": {}}
+    return {"code": code, "message": message, "details": details, "metrics": {}}
 
 
 def _select_usb_storage(devices: list[dict[str, Any]]) -> dict[str, Any] | None:

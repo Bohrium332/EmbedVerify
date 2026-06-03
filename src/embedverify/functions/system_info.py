@@ -12,10 +12,8 @@ def collect(*, capability_registry: dict[str, Any] | None = None) -> dict[str, A
     if cap is None:
         return {
             "code": -2,
-            "status": "failed",
             "message": "system_info capability is not available",
             "details": {},
             "metrics": {},
         }
     return cap.collect()
-

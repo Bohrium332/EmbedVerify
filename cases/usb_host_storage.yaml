@@ -10,9 +10,9 @@ functions:
     expect:
       pass_policy: all
       rules:
-        - field: status
+        - field: code
           operator: eq
-          value: passed
+          value: 0
           message: USB device must be detected
 
   - name: storage.info
@@ -20,6 +20,10 @@ functions:
     expect:
       pass_policy: all
       rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Storage info command must succeed
         - field: metrics.device_count
           operator: gt
           value: 0
@@ -32,6 +36,10 @@ functions:
     expect:
       pass_policy: all
       rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: USB storage read speed command must succeed
         - field: metrics.read_speed_mbps
           operator: gt
           value: 0
@@ -45,6 +53,10 @@ functions:
     expect:
       pass_policy: all
       rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: USB storage write speed command must succeed
         - field: metrics.write_speed_mbps
           operator: gt
           value: 0

@@ -67,7 +67,6 @@ def _storage_cap(capability_registry: dict[str, Any] | None) -> Any:
     if cap is None:
         return {
             "code": -2,
-            "status": "failed",
             "message": "storage capability is not available",
             "details": {},
             "metrics": {},

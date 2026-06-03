@@ -20,7 +20,6 @@ def detect(
     if cap is None:
         return {
             "code": -2,
-            "status": "failed",
             "message": "usb capability is not available",
             "details": {},
             "metrics": {},
@@ -32,4 +31,3 @@ def detect(
         expected_count=expected_count,
         timeout=timeout,
     )
-

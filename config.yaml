@@ -1,0 +1,3 @@
+board: recomputer_j401
+report_dir: reports
+log_level: info

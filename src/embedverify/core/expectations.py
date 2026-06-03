@@ -9,11 +9,11 @@ def evaluate_expectation(result: dict[str, Any], expect: dict[str, Any] | None) 
     """Evaluate an expectation block against a function result."""
 
     if not expect:
-        passed = result.get("status") == "passed" and result.get("code") == 0
+        passed = result.get("code") == 0
         return {
             "passed": passed,
             "policy": "default",
-            "failures": [] if passed else ["default status/code check failed"],
+            "failures": [] if passed else ["default code check failed"],
         }
 
     rules = expect.get("rules", [])
@@ -83,4 +83,3 @@ def _get_field(data: dict[str, Any], field: str) -> Any:
         else:
             return None
     return current
-

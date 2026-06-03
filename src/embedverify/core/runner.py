@@ -39,9 +39,10 @@ class SuiteRunner:
         """Run a suite and return the final report dictionary."""
 
         suite = self.loader.load_suite(suite_path)
-        selected_board = board_name or suite.board
+        project_config = self.loader.load_project_config()
+        selected_board = board_name or project_config.board
         if not selected_board:
-            raise RunnerError("board is required, either in suite config or --board")
+            raise RunnerError("board is required, either in --board or config.yaml")
         board = self.loader.load_board(selected_board)
         capabilities = build_capability_registry(board)
 
@@ -57,11 +58,6 @@ class SuiteRunner:
                     started_perf = time.perf_counter()
                     result = _invoke_function(function.name, params, capabilities)
                     expectation = evaluate_expectation(result, function.expect)
-                    if not expectation["passed"] and result.get("status") == "passed":
-                        result = dict(result)
-                        result["status"] = "failed"
-                        result["code"] = -1
-                        result["message"] = f"expectation failed: {result.get('message', '')}"
                     finished = utc_now_iso()
                     records.append(
                         ExecutionRecord(
@@ -75,7 +71,7 @@ class SuiteRunner:
                         )
                     )
 
-        status = "passed" if all(item.result.get("status") == "passed" for item in records) else "failed"
+        status = "passed" if all(item.expectation.get("passed") for item in records) else "failed"
         if dry_run:
             status = "dry_run"
         report = {
@@ -101,7 +97,7 @@ class SuiteRunner:
         }
 
         if suite.report_enabled and not dry_run:
-            writer = ReportWriter(reports_dir or (self.root / "reports"))
+            writer = ReportWriter(reports_dir or (self.root / project_config.report_dir))
             report["report_files"] = writer.write(report)
         return report
 
@@ -149,4 +145,3 @@ def _board_to_dict(board: BoardProfile) -> dict[str, Any]:
         "tools_required": board.tools_required,
         "metadata": board.metadata,
     }
-

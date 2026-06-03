@@ -8,6 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigLoaderTests(unittest.TestCase):
+    def test_load_project_config(self):
+        config = ConfigLoader(ROOT).load_project_config()
+
+        self.assertEqual(config.board, "recomputer_j401")
+        self.assertEqual(config.report_dir, "reports")
+
     def test_load_recomputer_j401_board(self):
         board = ConfigLoader(ROOT).load_board("recomputer_j401")
 
@@ -35,4 +41,3 @@ class ConfigLoaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

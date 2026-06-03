@@ -21,7 +21,6 @@ Function output stays compatible with the existing EmbedVerify contract:
 ```json
 {
   "code": 0,
-  "status": "passed",
   "message": "...",
   "details": {},
   "metrics": {}
@@ -37,6 +36,13 @@ pip install -e .
 
 ev run suites/usb_smoke.yaml \
   --board recomputer_j401
+```
+
+The default board can also be selected from root `config.yaml`, so the normal
+command can be:
+
+```bash
+ev run suites/usb_smoke.yaml
 ```
 
 The runner auto-detects the first USB storage device. If the selected partition

@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from .models import BoardProfile, CaseSpec, FunctionSpec, SuiteSpec
+from .models import BoardProfile, CaseSpec, FunctionSpec, ProjectConfig, SuiteSpec
 
 
 class ConfigError(ValueError):
@@ -31,6 +31,20 @@ class ConfigLoader:
             interfaces=dict(data.get("interfaces", {})),
             tools_required=list(data.get("tools_required", [])),
             metadata=dict(data.get("metadata", {})),
+        )
+
+    def load_project_config(self) -> ProjectConfig:
+        path = self.root / "config.yaml"
+        if not path.exists():
+            return ProjectConfig()
+        data = self._load_mapping(path)
+        board = data.get("board")
+        report_dir = data.get("report_dir", "reports")
+        log_level = data.get("log_level", "info")
+        return ProjectConfig(
+            board=board if isinstance(board, str) and board else None,
+            report_dir=str(report_dir or "reports"),
+            log_level=str(log_level or "info"),
         )
 
     def load_suite(self, suite_path: str | Path) -> SuiteSpec:
@@ -101,4 +115,3 @@ class ConfigLoader:
         if not isinstance(value, str) or not value:
             raise ConfigError(f"{path}: '{key}' is required")
         return value
-

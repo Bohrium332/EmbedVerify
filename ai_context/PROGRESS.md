@@ -10,6 +10,7 @@
 - Implemented auto mount/unmount for write speed when running as root.
 - Fixed USB device-level speed parsing from `lsusb -t`.
 - Verified reComputer J401 / Jetson USB smoke on real hardware.
+- Added AI handoff context in `CLAUDE.md`, `CODEX.md`, and `ai_context/`.
 
 ## Latest Passing Metrics
 
@@ -23,11 +24,8 @@ write_speed_mbps: 17.2
 
 ## Next Round
 
-- Add root `config.yaml`.
-- Implement board selection priority: CLI `--board` > `config.yaml` > error.
-- Remove board binding from `suites/usb_smoke.yaml`.
-- Remove `status` from Function return values.
-- Update Case expectations to use `code + metrics`.
+- Verify root `config.yaml` board selection on Jetson.
+- Verify Function returns no longer contain `status`.
 - Split `usb.py` and `storage.py` into entrypoint + `*_lib.py` layout.
 
 ## Round After Next
@@ -36,4 +34,3 @@ write_speed_mbps: 17.2
 - Add `label` / `save_output`.
 - Add `{{...}}` template references.
 - Change reports to timestamped report directories.
-

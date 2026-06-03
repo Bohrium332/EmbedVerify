@@ -13,9 +13,7 @@ class JetsonSystemInfoCapability:
 
         return {
             "code": 0,
-            "status": "passed",
             "message": "Jetson system info capability is available",
             "details": {"adapter": "jetson"},
             "metrics": {},
         }
-

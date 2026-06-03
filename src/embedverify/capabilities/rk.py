@@ -13,9 +13,7 @@ class RKSystemInfoCapability:
 
         return {
             "code": 0,
-            "status": "passed",
             "message": "RK system info capability is available",
             "details": {"adapter": "rk"},
             "metrics": {},
         }
-

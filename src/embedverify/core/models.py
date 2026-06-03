@@ -21,6 +21,15 @@ class BoardProfile:
 
 
 @dataclass(slots=True)
+class ProjectConfig:
+    """Root project configuration."""
+
+    board: str | None = None
+    report_dir: str = "reports"
+    log_level: str = "info"
+
+
+@dataclass(slots=True)
 class FunctionSpec:
     """Function invocation loaded from a case."""
 
@@ -71,4 +80,3 @@ def utc_now_iso() -> str:
     """Return current UTC time in ISO 8601 format."""
 
     return datetime.now(timezone.utc).isoformat()
-
