@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from importlib import util as importlib_util
 import time
 import uuid
 from pathlib import Path
@@ -108,9 +109,22 @@ def _invoke_function(
     capabilities: dict[str, Any],
 ) -> dict[str, Any]:
     module_name, function_name = _split_function_name(name)
-    module = importlib.import_module(f"embedverify.functions.{module_name}")
-    callable_obj: Callable[..., dict[str, Any]] = getattr(module, function_name)
+    entrypoint_module = f"embedverify.functions.{module_name}.{function_name}"
+    if _module_exists(entrypoint_module):
+        module = importlib.import_module(entrypoint_module)
+        callable_obj: Callable[..., dict[str, Any]] = getattr(module, "execute")
+        return callable_obj(params, capability_registry=capabilities)
+
+    legacy_module = importlib.import_module(f"embedverify.functions.{module_name}")
+    callable_obj = getattr(legacy_module, function_name)
     return callable_obj(**params, capability_registry=capabilities)
+
+
+def _module_exists(module_name: str) -> bool:
+    try:
+        return importlib_util.find_spec(module_name) is not None
+    except (AttributeError, ModuleNotFoundError):
+        return False
 
 
 def _split_function_name(name: str) -> tuple[str, str]:
