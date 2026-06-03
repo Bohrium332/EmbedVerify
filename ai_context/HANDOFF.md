@@ -33,8 +33,9 @@ echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/u
 ## Latest Passing Reports
 
 ```text
-/home/zzd/EmbedVerify/reports/bd71941e1be6_passed.json
-/home/zzd/EmbedVerify/reports/bd71941e1be6_passed.txt
+/home/zzd/EmbedVerify/reports/20260603T094633Z_4a01cc6d559d_passed/report.json
+/home/zzd/EmbedVerify/reports/20260603T094633Z_4a01cc6d559d_passed/report.txt
+/home/zzd/EmbedVerify/reports/20260603T094633Z_4a01cc6d559d_passed/outputs/
 ```
 
 Latest validated commit:
@@ -52,9 +53,10 @@ Function result status fields: none
 USB storage: Realtek RTL9210 M.2 NVME Adapter
 USB speed: 10G
 storage layout: whole-disk ext4 on /dev/sda
-read_speed_mbps: 123.0
-write_speed_mbps: 552.0
+read_speed_mbps: 692.0
+write_speed_mbps: 570.0
 TXT report format: code=<value>, no Function status
+labels/save_output/templates/report directories: verified
 ```
 
 ## Notes

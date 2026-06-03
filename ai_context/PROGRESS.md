@@ -25,6 +25,8 @@
 - Verified full USB smoke on the clean whole-disk ext4 SSD.
 - Fixed TXT report formatting so Function results display `code=<value>`
   instead of the removed Function `status`.
+- Added `label`, `skip_on_fail`, `save_output`, parameter templates, and
+  timestamped report directories.
 
 ## Latest Passing Metrics
 
@@ -33,9 +35,9 @@ board: recomputer_j401
 USB device: Realtek RTL9210 M.2 NVME Adapter
 USB speed: 10G
 storage layout: whole-disk ext4 on /dev/sda
-read_speed_mbps: 123.0
-write_speed_mbps: 552.0
-latest report: /home/zzd/EmbedVerify/reports/bd71941e1be6_passed.json
+read_speed_mbps: 692.0
+write_speed_mbps: 570.0
+latest report dir: /home/zzd/EmbedVerify/reports/20260603T094633Z_4a01cc6d559d_passed
 ```
 
 ## Latest SSD Investigation
@@ -93,22 +95,22 @@ disk. The framework now supports whole-disk filesystems and uses `tune2fs`
 Latest full smoke passed:
 
 ```text
-request_id: bd71941e1be6
+request_id: 4a01cc6d559d
 report_status: passed
 usb.detect: code=0, 10G Realtek RTL9210 device detected
 storage.info: code=0, whole_disk_filesystem=true
-storage.read_speed: code=0, 123.0 MB/s
-storage.write_speed: code=0, 552.0 MB/s
+storage.read_speed: code=0, 692.0 MB/s
+storage.write_speed: code=0, 570.0 MB/s
+report dir: /home/zzd/EmbedVerify/reports/20260603T094633Z_4a01cc6d559d_passed
+saved outputs: 4 function output JSON files
 report text format: code=<value>, no Function status field
 ```
 
 ## Next Round
 
-- Add `skip_on_fail`.
-- Add `label` / `save_output`.
-- Add `{{...}}` template references.
-- Change reports to timestamped report directories.
+- Start preparing the next non-USB minimal link or board profile expansion.
+- Keep USB smoke as the regression baseline for future framework changes.
 
 ## Round After Next
 
-- Start preparing the next non-USB minimal link or board profile expansion.
+- Add richer report summaries if repeated runs need comparison/trending.
