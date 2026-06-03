@@ -22,16 +22,20 @@
 - Verified the dirty SSD guard path on Jetson.
 - Added support for USB disks that have a filesystem directly on the disk node
   instead of a partition.
+- Verified full USB smoke on the clean whole-disk ext4 SSD.
+- Fixed TXT report formatting so Function results display `code=<value>`
+  instead of the removed Function `status`.
 
 ## Latest Passing Metrics
 
 ```text
 board: recomputer_j401
-USB device: Kingston DataTraveler 3.0
-USB speed: 5G
-read_speed_mbps: 162.0
-write_speed_mbps: 17.7
-latest report: /home/zzd/EmbedVerify/reports/84ee0070f16d_passed.json
+USB device: Realtek RTL9210 M.2 NVME Adapter
+USB speed: 10G
+storage layout: whole-disk ext4 on /dev/sda
+read_speed_mbps: 123.0
+write_speed_mbps: 552.0
+latest report: /home/zzd/EmbedVerify/reports/bd71941e1be6_passed.json
 ```
 
 ## Latest SSD Investigation
@@ -86,15 +90,25 @@ and `FEATURE_R16`, so `fsck -n` cannot be used as the pass/fail signal for this
 disk. The framework now supports whole-disk filesystems and uses `tune2fs`
 `Filesystem state` for the pre-mount ext health guard.
 
+Latest full smoke passed:
+
+```text
+request_id: bd71941e1be6
+report_status: passed
+usb.detect: code=0, 10G Realtek RTL9210 device detected
+storage.info: code=0, whole_disk_filesystem=true
+storage.read_speed: code=0, 123.0 MB/s
+storage.write_speed: code=0, 552.0 MB/s
+report text format: code=<value>, no Function status field
+```
+
 ## Next Round
-
-- Sync whole-disk filesystem support to Jetson.
-- Run full `suites/usb_smoke.yaml` on the clean SSD.
-- Inspect the generated JSON/TXT report and recent dmesg.
-
-## Round After Next
 
 - Add `skip_on_fail`.
 - Add `label` / `save_output`.
 - Add `{{...}}` template references.
 - Change reports to timestamped report directories.
+
+## Round After Next
+
+- Start preparing the next non-USB minimal link or board profile expansion.

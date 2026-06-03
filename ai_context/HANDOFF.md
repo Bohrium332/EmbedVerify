@@ -33,8 +33,8 @@ echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/u
 ## Latest Passing Reports
 
 ```text
-/home/zzd/EmbedVerify/reports/84ee0070f16d_passed.json
-/home/zzd/EmbedVerify/reports/84ee0070f16d_passed.txt
+/home/zzd/EmbedVerify/reports/bd71941e1be6_passed.json
+/home/zzd/EmbedVerify/reports/bd71941e1be6_passed.txt
 ```
 
 Latest validated commit:
@@ -49,8 +49,12 @@ Latest result summary:
 report_status: passed
 board: recomputer_j401
 Function result status fields: none
-read_speed_mbps: 162.0
-write_speed_mbps: 17.7
+USB storage: Realtek RTL9210 M.2 NVME Adapter
+USB speed: 10G
+storage layout: whole-disk ext4 on /dev/sda
+read_speed_mbps: 123.0
+write_speed_mbps: 552.0
+TXT report format: code=<value>, no Function status
 ```
 
 ## Notes
