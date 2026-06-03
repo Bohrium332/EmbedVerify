@@ -85,3 +85,14 @@ Do not run full write smoke on this SSD until the user explicitly approves
 repairing `/dev/sda1` or provides a clean test disk. The framework now blocks
 auto-mount write testing for dirty ext filesystems and adds storage dmesg
 diagnostics to write failures.
+
+Verified guard behavior on Jetson:
+
+```text
+Function: storage.write_speed(mount_point="auto")
+code: -1
+message: USB storage filesystem is not clean; repair required before write test
+filesystem_state: clean with errors
+needs_recovery: true
+mount/write attempted: no
+```

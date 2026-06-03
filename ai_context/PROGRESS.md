@@ -19,6 +19,7 @@
 - Split `usb.py` and `storage.py` into entrypoint + `*_lib.py` layout.
 - Added storage write diagnostics for timeout/failure paths.
 - Added ext filesystem health guard before auto-mount write tests.
+- Verified the dirty SSD guard path on Jetson.
 
 ## Latest Passing Metrics
 
@@ -57,12 +58,22 @@ fsck -n: free blocks/inodes counts are wrong
 Do not run write tests on this SSD partition until it is repaired with an
 explicit user-approved fsck repair or replaced with a clean test disk.
 
+The guarded `storage.write_speed(mount_point="auto")` path now returns before
+mounting or writing:
+
+```text
+code: -1
+message: USB storage filesystem is not clean; repair required before write test
+filesystem_state: clean with errors
+needs_recovery: true
+```
+
 ## Next Round
 
-- Sync latest storage safety changes to Jetson.
-- Verify the dirty SSD path returns a controlled failure before mounting or
-  writing.
 - Ask the user whether to repair `/dev/sda1` or swap in a clean test disk.
+- If the user approves repair, run `fsck` repair on `/dev/sda1` and re-check
+  with `fsck -n`.
+- If the user swaps media, run read-only discovery first before write smoke.
 
 ## Round After Next
 
