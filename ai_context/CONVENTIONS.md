@@ -70,10 +70,14 @@ returns the framework contract.
 Storage write tests may auto-mount an unmounted USB partition only after a
 read-only health check when the partition is ext2/ext3/ext4.
 
-If `tune2fs -l` reports `needs_recovery` or a filesystem state other than
-`clean`, the write test must fail before mounting or writing. The report should
-include the parsed filesystem health and recent storage-related dmesg errors
-when available.
+If `tune2fs -l` reports a filesystem state other than `clean`, the write test
+must fail before mounting or writing. The report should include the parsed
+filesystem health and recent storage-related dmesg errors when available.
+
+Keep `needs_recovery` in the health details as a diagnostic flag. Do not block
+only on that flag when `Filesystem state` is explicitly `clean`; some clean or
+recently mounted ext filesystems can expose the flag while still being safe for
+the intended write smoke.
 
 ## Reporting To User
 

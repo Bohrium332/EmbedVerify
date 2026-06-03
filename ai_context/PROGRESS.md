@@ -20,6 +20,8 @@
 - Added storage write diagnostics for timeout/failure paths.
 - Added ext filesystem health guard before auto-mount write tests.
 - Verified the dirty SSD guard path on Jetson.
+- Added support for USB disks that have a filesystem directly on the disk node
+  instead of a partition.
 
 ## Latest Passing Metrics
 
@@ -36,7 +38,7 @@ latest report: /home/zzd/EmbedVerify/reports/84ee0070f16d_passed.json
 
 ```text
 date: 2026-06-03
-device: /dev/sda
+previous device: /dev/sda1 on /dev/sda
 transport: USB 10G, UAS
 model: External
 partition: /dev/sda1 ext4
@@ -68,16 +70,30 @@ filesystem_state: clean with errors
 needs_recovery: true
 ```
 
+## Current Clean SSD
+
+```text
+date: 2026-06-03
+device: /dev/sda
+layout: whole-disk ext4, no /dev/sda1 partition
+model: RTL9210B-CG
+USB link: 10G, UAS
+tune2fs state: clean
+```
+
+Jetson `e2fsck 1.46.5` does not understand this filesystem's `FEATURE_C12`
+and `FEATURE_R16`, so `fsck -n` cannot be used as the pass/fail signal for this
+disk. The framework now supports whole-disk filesystems and uses `tune2fs`
+`Filesystem state` for the pre-mount ext health guard.
+
 ## Next Round
 
-- Ask the user whether to repair `/dev/sda1` or swap in a clean test disk.
-- If the user approves repair, run `fsck` repair on `/dev/sda1` and re-check
-  with `fsck -n`.
-- If the user swaps media, run read-only discovery first before write smoke.
+- Sync whole-disk filesystem support to Jetson.
+- Run full `suites/usb_smoke.yaml` on the clean SSD.
+- Inspect the generated JSON/TXT report and recent dmesg.
 
 ## Round After Next
 
-- After clean media is available, rerun full `suites/usb_smoke.yaml`.
 - Add `skip_on_fail`.
 - Add `label` / `save_output`.
 - Add `{{...}}` template references.

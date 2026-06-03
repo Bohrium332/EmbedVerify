@@ -435,10 +435,13 @@ def _select_usb_storage(devices: list[dict[str, Any]]) -> dict[str, Any] | None:
         children = disk.get("children") or []
         partition_info = _select_partition(children)
         if partition_info is None:
+            disk_fstype = disk.get("fstype") or ""
             return {
                 "disk": disk_path,
-                "partition": "",
-                "mount_point": "",
+                "partition": disk_path if disk_fstype else "",
+                "mount_point": disk.get("mountpoint") or "",
+                "fstype": disk_fstype,
+                "whole_disk_filesystem": bool(disk_fstype),
                 "model": disk.get("model"),
                 "serial": disk.get("serial"),
                 "vendor": disk.get("vendor"),
@@ -498,12 +501,17 @@ def _parse_tune2fs_health(output: str) -> dict[str, Any]:
 
     state_lower = state.lower()
     needs_recovery = "needs_recovery" in features
-    safe_to_mount = state_lower == "clean" and not needs_recovery
+    safe_to_mount = state_lower == "clean"
     reasons = []
+    warnings = []
     if state and state_lower != "clean":
         reasons.append(f"filesystem state is {state}")
     if needs_recovery:
-        reasons.append("filesystem journal needs recovery")
+        message = "filesystem journal recovery flag is set"
+        if safe_to_mount:
+            warnings.append(message)
+        else:
+            reasons.append(message)
     return {
         "checked": True,
         "tool": "tune2fs",
@@ -513,6 +521,7 @@ def _parse_tune2fs_health(output: str) -> dict[str, Any]:
         "needs_recovery": needs_recovery,
         "safe_to_mount": safe_to_mount,
         "reasons": reasons,
+        "warnings": warnings,
     }
 
 

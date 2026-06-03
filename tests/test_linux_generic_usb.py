@@ -97,6 +97,26 @@ class LinuxGenericUSBTests(unittest.TestCase):
         self.assertEqual(selected["partition"], "/dev/sda1")
         self.assertEqual(selected["mount_point"], "")
 
+    def test_select_usb_storage_supports_whole_disk_filesystem(self):
+        devices = [
+            {
+                "name": "sda",
+                "path": "/dev/sda",
+                "type": "disk",
+                "tran": "usb",
+                "fstype": "ext4",
+                "mountpoint": "",
+                "children": [],
+            }
+        ]
+
+        selected = _select_usb_storage(devices)
+
+        self.assertEqual(selected["disk"], "/dev/sda")
+        self.assertEqual(selected["partition"], "/dev/sda")
+        self.assertEqual(selected["fstype"], "ext4")
+        self.assertTrue(selected["whole_disk_filesystem"])
+
     def test_parse_tune2fs_health_blocks_dirty_ext(self):
         output = "\n".join(
             [
@@ -111,7 +131,22 @@ class LinuxGenericUSBTests(unittest.TestCase):
         self.assertTrue(health["checked"])
         self.assertFalse(health["safe_to_mount"])
         self.assertTrue(health["needs_recovery"])
-        self.assertIn("filesystem journal needs recovery", health["reasons"])
+        self.assertIn("filesystem journal recovery flag is set", health["reasons"])
+
+    def test_parse_tune2fs_health_allows_clean_state_with_recovery_flag(self):
+        output = "\n".join(
+            [
+                "Filesystem features:      has_journal needs_recovery extent 64bit",
+                "Filesystem state:         clean",
+                "Errors behavior:          Continue",
+            ]
+        )
+
+        health = _parse_tune2fs_health(output)
+
+        self.assertTrue(health["safe_to_mount"])
+        self.assertTrue(health["needs_recovery"])
+        self.assertIn("filesystem journal recovery flag is set", health["warnings"])
 
     def test_write_speed_blocks_dirty_ext_before_mount(self):
         runner = RecordingRunner(
