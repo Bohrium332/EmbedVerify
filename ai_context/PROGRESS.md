@@ -11,6 +11,11 @@
 - Fixed USB device-level speed parsing from `lsusb -t`.
 - Verified reComputer J401 / Jetson USB smoke on real hardware.
 - Added AI handoff context in `CLAUDE.md`, `CODEX.md`, and `ai_context/`.
+- Added root `config.yaml` board selection.
+- Removed board binding from `suites/usb_smoke.yaml`.
+- Removed `status` from Function return values.
+- Updated USB Case expectations to use `code + metrics`.
+- Verified config-driven USB smoke on real hardware without passing `--board`.
 
 ## Latest Passing Metrics
 
@@ -18,14 +23,13 @@
 board: recomputer_j401
 USB device: Kingston DataTraveler 3.0
 USB speed: 5G
-read_speed_mbps: 159.0
-write_speed_mbps: 17.2
+read_speed_mbps: 162.0
+write_speed_mbps: 17.7
+latest report: /home/zzd/EmbedVerify/reports/84ee0070f16d_passed.json
 ```
 
 ## Next Round
 
-- Verify root `config.yaml` board selection on Jetson.
-- Verify Function returns no longer contain `status`.
 - Split `usb.py` and `storage.py` into entrypoint + `*_lib.py` layout.
 
 ## Round After Next
