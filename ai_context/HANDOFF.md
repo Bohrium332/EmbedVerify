@@ -5,7 +5,7 @@
 ```text
 repo: https://github.com/Bohrium332/EmbedVerify
 branch: main
-latest known commit: 7b28f2b Use config board selection and code-only function results
+latest known commit: run `git log --oneline -1`
 ```
 
 ## Verified Board
@@ -40,7 +40,7 @@ echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/u
 Latest validated commit:
 
 ```text
-7b28f2b Use config board selection and code-only function results
+b6cc509 Split USB and storage functions into entrypoint modules
 ```
 
 Latest result summary:
@@ -58,3 +58,30 @@ write_speed_mbps: 17.7
 - USB storage auto-discovery found `/dev/sda`.
 - Auto-mount used `/mnt/embedverify-sda1`.
 - The mount was automatically removed after write speed testing.
+
+## Current SSD Caution
+
+The user replaced the original USB flash drive with an SSD on 2026-06-03.
+The SSD enumerated as `/dev/sda` over USB 10G/UAS and read speed was around
+700 MB/s, but write testing triggered real kernel errors:
+
+```text
+uas reset
+I/O error, dev sda
+EXT4-fs error
+Detected aborted journal
+Remounting filesystem read-only
+```
+
+After reboot, `/dev/sda1` was unmounted but not clean:
+
+```text
+tune2fs: Filesystem state: clean with errors
+tune2fs: Filesystem features includes needs_recovery
+fsck -n: free blocks/inodes counts are wrong
+```
+
+Do not run full write smoke on this SSD until the user explicitly approves
+repairing `/dev/sda1` or provides a clean test disk. The framework now blocks
+auto-mount write testing for dirty ext filesystems and adds storage dmesg
+diagnostics to write failures.

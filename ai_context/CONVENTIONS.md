@@ -65,6 +65,16 @@ functions/<module>/<module>_lib.py
 The lib returns raw data or plain helper structures. The operation entrypoint
 returns the framework contract.
 
+## Storage Write Safety
+
+Storage write tests may auto-mount an unmounted USB partition only after a
+read-only health check when the partition is ext2/ext3/ext4.
+
+If `tune2fs -l` reports `needs_recovery` or a filesystem state other than
+`clean`, the write test must fail before mounting or writing. The report should
+include the parsed filesystem health and recent storage-related dmesg errors
+when available.
+
 ## Reporting To User
 
 After every execution turn, include:
@@ -74,4 +84,3 @@ After every execution turn, include:
 下一轮待办：
 下下轮待办：
 ```
-

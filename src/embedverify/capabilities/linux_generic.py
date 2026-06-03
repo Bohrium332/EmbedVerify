@@ -228,7 +228,32 @@ class GenericStorageCapability:
         if not os.path.ismount(resolved_mount):
             return _failed(-1, "mount point is not mounted", {"mount_point": resolved_mount})
 
+        mount_source = self._mount_source(resolved_mount)
+        mount_options = self._mount_options(resolved_mount)
+        if "ro" in mount_options.split(","):
+            if auto_mounted:
+                self._umount(resolved_mount)
+            return _failed(
+                -1,
+                "mount point is read-only",
+                {
+                    "mount_point": resolved_mount,
+                    "mount_source": mount_source,
+                    "mount_options": mount_options,
+                    "dmesg_errors": _recent_storage_dmesg_errors(mount_source),
+                },
+            )
+
         test_file = str(Path(resolved_mount) / ".ev_write_test.bin")
+        base_details = {
+            "mount_point": resolved_mount,
+            "mount_source": mount_source,
+            "mount_options": mount_options,
+            "file_size_mb": file_size_mb,
+            "min_speed_mbps": min_speed_mbps,
+            "auto_mounted": auto_mounted,
+            "discovery": discovery,
+        }
         try:
             result = self.runner(
                 [
@@ -243,7 +268,11 @@ class GenericStorageCapability:
                 timeout,
             )
         except subprocess.TimeoutExpired:
-            return _failed(-1, "storage write test timed out", {"mount_point": resolved_mount})
+            return _failed(
+                1,
+                "storage write test timed out",
+                base_details | {"dmesg_errors": _recent_storage_dmesg_errors(mount_source)},
+            )
         finally:
             try:
                 os.remove(test_file)
@@ -253,6 +282,18 @@ class GenericStorageCapability:
                 self._umount(resolved_mount)
 
         speed_mbps = _parse_dd_speed(result.stderr)
+        if result.returncode != 0:
+            return _failed(
+                -1,
+                "storage write test failed",
+                base_details
+                | {
+                    "exit_code": result.returncode,
+                    "stderr_tail": _tail_text(result.stderr),
+                    "dmesg_errors": _recent_storage_dmesg_errors(mount_source),
+                },
+            )
+
         success = speed_mbps > 0 and (min_speed_mbps <= 0 or speed_mbps >= min_speed_mbps)
         return {
             "code": 0 if success else -1,
@@ -261,14 +302,7 @@ class GenericStorageCapability:
                 if success
                 else f"write speed {speed_mbps:.1f} MB/s below threshold {min_speed_mbps} MB/s"
             ),
-            "details": {
-                "mount_point": resolved_mount,
-                "file_size_mb": file_size_mb,
-                "min_speed_mbps": min_speed_mbps,
-                "exit_code": result.returncode,
-                "auto_mounted": auto_mounted,
-                "discovery": discovery,
-            },
+            "details": base_details | {"exit_code": result.returncode},
             "metrics": {"write_speed_mbps": round(speed_mbps, 2)},
         }
 
@@ -307,6 +341,18 @@ class GenericStorageCapability:
         partition = str(discovery.get("partition") or "")
         if not partition:
             return _failed(-1, "USB storage partition was not auto-detected", {"discovery": discovery})
+        health = self._ext_filesystem_health(partition, str(discovery.get("fstype") or ""))
+        if health.get("checked") and not health.get("safe_to_mount"):
+            return _failed(
+                -1,
+                "USB storage filesystem is not clean; repair required before write test",
+                {
+                    "partition": partition,
+                    "fstype": discovery.get("fstype"),
+                    "filesystem_health": health,
+                    "dmesg_errors": _recent_storage_dmesg_errors(partition),
+                },
+            )
         if os.geteuid() != 0:
             return _failed(
                 -1,
@@ -337,6 +383,44 @@ class GenericStorageCapability:
             self.runner(["umount", mount_point], 10)
         except Exception:
             pass
+
+    def _mount_source(self, mount_point: str) -> str:
+        try:
+            result = self.runner(["findmnt", "-n", "-o", "SOURCE", mount_point], 5)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+
+    def _mount_options(self, mount_point: str) -> str:
+        try:
+            result = self.runner(["findmnt", "-n", "-o", "OPTIONS", mount_point], 5)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+
+    def _ext_filesystem_health(self, partition: str, fstype: str) -> dict[str, Any]:
+        if fstype not in ("ext2", "ext3", "ext4"):
+            return {"checked": False, "reason": f"fstype {fstype or 'unknown'} is not ext"}
+        if not shutil.which("tune2fs"):
+            return {"checked": False, "reason": "tune2fs not found"}
+        try:
+            result = self.runner(["tune2fs", "-l", partition], 10)
+        except subprocess.TimeoutExpired:
+            return {"checked": False, "reason": "tune2fs timed out", "partition": partition}
+        except FileNotFoundError:
+            return {"checked": False, "reason": "tune2fs not found"}
+        health = _parse_tune2fs_health(result.stdout)
+        health["partition"] = partition
+        health["fstype"] = fstype
+        health["exit_code"] = result.returncode
+        if result.returncode != 0:
+            health["checked"] = False
+            health["reason"] = _tail_text(result.stderr) or "tune2fs failed"
+        return health
 
 
 def _failed(code: int, message: str, details: dict[str, Any]) -> dict[str, Any]:
@@ -393,6 +477,43 @@ def _node_path(node: dict[str, Any]) -> str:
         return path
     name = str(node.get("name") or "")
     return f"/dev/{name}" if name else ""
+
+
+def _parse_tune2fs_health(output: str) -> dict[str, Any]:
+    state = ""
+    features: list[str] = []
+    errors_behavior = ""
+    for line in output.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "filesystem state":
+            state = value
+        elif key == "filesystem features":
+            features = value.split()
+        elif key == "errors behavior":
+            errors_behavior = value
+
+    state_lower = state.lower()
+    needs_recovery = "needs_recovery" in features
+    safe_to_mount = state_lower == "clean" and not needs_recovery
+    reasons = []
+    if state and state_lower != "clean":
+        reasons.append(f"filesystem state is {state}")
+    if needs_recovery:
+        reasons.append("filesystem journal needs recovery")
+    return {
+        "checked": True,
+        "tool": "tune2fs",
+        "filesystem_state": state,
+        "features": features,
+        "errors_behavior": errors_behavior,
+        "needs_recovery": needs_recovery,
+        "safe_to_mount": safe_to_mount,
+        "reasons": reasons,
+    }
 
 
 def _parse_lsusb(
@@ -482,6 +603,47 @@ def _recent_usb_dmesg_errors() -> list[str]:
         if "usb" in low and ("error" in low or "fail" in low or "unable" in low):
             errors.append(line.strip())
     return errors
+
+
+def _recent_storage_dmesg_errors(device: str = "") -> list[str]:
+    if not shutil.which("dmesg"):
+        return []
+    try:
+        result = run_command(["dmesg"], 5)
+    except Exception:
+        return []
+    if result.returncode != 0:
+        return []
+
+    names = _device_names(device)
+    context_terms = ("uas", "usb-storage", "scsi", "blk_update_request", "buffer i/o", "ext4-fs", "journal")
+    error_terms = ("error", "fail", "reset", "abort", "read-only", "offline", "timeout", "i/o")
+    errors = []
+    for line in result.stdout.splitlines():
+        low = line.lower()
+        has_context = any(term in low for term in context_terms) or any(name in low for name in names)
+        has_error = any(term in low for term in error_terms)
+        if has_context and has_error:
+            errors.append(line.strip())
+    return errors[-30:]
+
+
+def _device_names(device: str) -> list[str]:
+    name = Path(device).name if device else ""
+    if not name:
+        return []
+    names = [name.lower()]
+    disk_match = re.match(r"([a-z]+)", name.lower())
+    if disk_match:
+        names.append(disk_match.group(1))
+    return list(dict.fromkeys(names))
+
+
+def _tail_text(text: str, limit: int = 4000) -> str:
+    stripped = text.strip()
+    if len(stripped) <= limit:
+        return stripped
+    return stripped[-limit:]
 
 
 def _parse_dd_speed(stderr: str) -> float:
