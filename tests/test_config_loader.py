@@ -37,6 +37,11 @@ class ConfigLoaderTests(unittest.TestCase):
                 "storage.write_speed",
             ],
         )
+        self.assertEqual(case.functions[0].label, "usb_detect")
+        self.assertTrue(case.functions[0].save_output)
+        self.assertEqual(case.functions[2].label, "storage_read_speed")
+        self.assertTrue(case.functions[2].skip_on_fail)
+        self.assertEqual(case.functions[2].params["device"], "{{ storage_info.result.details.discovery.disk }}")
 
 
 if __name__ == "__main__":

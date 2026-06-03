@@ -47,6 +47,7 @@ Use these values unless a module has a documented extension:
 | --- | --- |
 | `0` | execution succeeded |
 | `1` | timeout |
+| `2` | skipped by runner |
 | `-1` | execution failed |
 | `-2` | environment/tool missing |
 | `-101` | device not found |
@@ -64,6 +65,48 @@ functions/<module>/<module>_lib.py
 
 The lib returns raw data or plain helper structures. The operation entrypoint
 returns the framework contract.
+
+## Case Flow Controls
+
+Function entries may use these runner-level fields:
+
+```yaml
+label: storage_info
+skip_on_fail: true
+save_output: true
+```
+
+`label` gives a stable reference name for reports and templates.
+
+`skip_on_fail: true` means this function is skipped when an earlier function in
+the same Case failed expectation. The runner emits `code: 2` for the skipped
+record and marks its expectation policy as `skipped`; the original failed
+record still controls the Case/Suite failure.
+
+`save_output: true` writes that function's execution record to
+`reports/<timestamp>_<request_id>_<status>/outputs/`.
+
+Parameter templates use `{{ ... }}` and should reference labels from earlier
+functions in the same Case:
+
+```yaml
+device: "{{ storage_info.result.details.discovery.disk }}"
+```
+
+When the whole value is a template, the resolved value keeps its original type.
+When a template is embedded inside a larger string, the resolved value is
+stringified.
+
+## Report Layout
+
+Reports are written under a timestamped request directory:
+
+```text
+reports/YYYYMMDDTHHMMSSZ_<request_id>_<status>/
+├── report.json
+├── report.txt
+└── outputs/
+```
 
 ## Storage Write Safety
 

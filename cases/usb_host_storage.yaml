@@ -4,6 +4,8 @@ module: usb
 execution: sequential
 functions:
   - name: usb.detect
+    label: usb_detect
+    save_output: true
     params:
       bus_type: any
       expected_count: 1
@@ -16,6 +18,9 @@ functions:
           message: USB device must be detected
 
   - name: storage.info
+    label: storage_info
+    skip_on_fail: true
+    save_output: true
     params: {}
     expect:
       pass_policy: all
@@ -30,8 +35,11 @@ functions:
           message: Storage device information must be available
 
   - name: storage.read_speed
+    label: storage_read_speed
+    skip_on_fail: true
+    save_output: true
     params:
-      device: auto
+      device: "{{ storage_info.result.details.discovery.disk }}"
       min_speed_mbps: 0
     expect:
       pass_policy: all
@@ -46,6 +54,9 @@ functions:
           message: USB storage read speed must be positive
 
   - name: storage.write_speed
+    label: storage_write_speed
+    skip_on_fail: true
+    save_output: true
     params:
       mount_point: auto
       file_size_mb: 256

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from importlib import util as importlib_util
+import re
 import time
 import uuid
 from pathlib import Path
@@ -19,6 +20,10 @@ from .report import ReportWriter
 
 class RunnerError(RuntimeError):
     """Raised when execution cannot start."""
+
+
+class TemplateError(ValueError):
+    """Raised when a parameter template cannot be resolved."""
 
 
 class SuiteRunner:
@@ -51,26 +56,48 @@ class SuiteRunner:
         if not dry_run:
             for case_ref in suite.cases:
                 case = self.loader.load_case(case_ref)
+                case_failed = False
+                case_failure_reason = ""
+                context: dict[str, Any] = {
+                    "board": _board_to_dict(board),
+                    "case": {"name": case.name, "module": case.module},
+                }
                 for function in case.functions:
                     if not function.enabled:
                         continue
-                    params = _apply_overrides(function.name, function.params, param_overrides or {})
                     started = utc_now_iso()
                     started_perf = time.perf_counter()
-                    result = _invoke_function(function.name, params, capabilities)
-                    expectation = evaluate_expectation(result, function.expect)
+                    skipped = False
+                    if function.skip_on_fail and case_failed:
+                        skipped = True
+                        result = _skipped_result(case_failure_reason)
+                        expectation = {"passed": True, "policy": "skipped", "failures": []}
+                    else:
+                        try:
+                            rendered_params = _render_templates(function.params, context)
+                            params = _apply_overrides(function.name, rendered_params, param_overrides or {})
+                            result = _invoke_function(function.name, params, capabilities)
+                        except TemplateError as exc:
+                            result = _runner_failed_result("parameter template resolution failed", {"error": str(exc)})
+                        expectation = evaluate_expectation(result, function.expect)
+                        if not expectation.get("passed"):
+                            case_failed = True
+                            case_failure_reason = f"{function.name}: {result.get('message', 'failed')}"
                     finished = utc_now_iso()
-                    records.append(
-                        ExecutionRecord(
-                            case_name=case.name,
-                            function_name=function.name,
-                            result=result,
-                            expectation=expectation,
-                            started_at=started,
-                            finished_at=finished,
-                            duration_ms=int((time.perf_counter() - started_perf) * 1000),
-                        )
+                    record = ExecutionRecord(
+                        case_name=case.name,
+                        function_name=function.name,
+                        label=function.label,
+                        result=result,
+                        expectation=expectation,
+                        started_at=started,
+                        finished_at=finished,
+                        duration_ms=int((time.perf_counter() - started_perf) * 1000),
+                        skipped=skipped,
+                        save_output=function.save_output,
                     )
+                    records.append(record)
+                    _register_context(context, record)
 
         status = "passed" if all(item.expectation.get("passed") for item in records) else "failed"
         if dry_run:
@@ -86,11 +113,14 @@ class SuiteRunner:
                 {
                     "case_name": item.case_name,
                     "function_name": item.function_name,
+                    "label": item.label,
                     "result": item.result,
                     "expectation": item.expectation,
                     "started_at": item.started_at,
                     "finished_at": item.finished_at,
                     "duration_ms": item.duration_ms,
+                    "skipped": item.skipped,
+                    "save_output": item.save_output,
                 }
                 for item in records
             ],
@@ -147,6 +177,78 @@ def _apply_overrides(name: str, params: dict[str, Any], overrides: dict[str, Any
     if name == "storage.write_speed" and overrides.get("write_min_speed_mbps") is not None:
         updated["min_speed_mbps"] = float(overrides["write_min_speed_mbps"])
     return updated
+
+
+_TEMPLATE_RE = re.compile(r"{{\s*([^{}]+?)\s*}}")
+_FULL_TEMPLATE_RE = re.compile(r"^\s*{{\s*([^{}]+?)\s*}}\s*$")
+
+
+def _render_templates(value: Any, context: dict[str, Any]) -> Any:
+    if isinstance(value, dict):
+        return {key: _render_templates(item, context) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_render_templates(item, context) for item in value]
+    if not isinstance(value, str):
+        return value
+
+    full_match = _FULL_TEMPLATE_RE.match(value)
+    if full_match:
+        return _resolve_template_path(full_match.group(1), context)
+
+    def replace(match: re.Match[str]) -> str:
+        resolved = _resolve_template_path(match.group(1), context)
+        return str(resolved)
+
+    return _TEMPLATE_RE.sub(replace, value)
+
+
+def _resolve_template_path(path: str, context: dict[str, Any]) -> Any:
+    current: Any = context
+    for part in [item.strip() for item in path.split(".") if item.strip()]:
+        if isinstance(current, dict):
+            if part not in current:
+                raise TemplateError(f"template key not found: {path}")
+            current = current[part]
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError) as exc:
+                raise TemplateError(f"template list index not found: {path}") from exc
+        else:
+            raise TemplateError(f"template path cannot descend into {part!r}: {path}")
+    return current
+
+
+def _register_context(context: dict[str, Any], record: ExecutionRecord) -> None:
+    entry = {
+        "case_name": record.case_name,
+        "function_name": record.function_name,
+        "label": record.label,
+        "result": record.result,
+        "expectation": record.expectation,
+        "skipped": record.skipped,
+    }
+    context["last"] = entry
+    context[_context_key(record.function_name)] = entry
+    if record.label:
+        context[record.label] = entry
+
+
+def _context_key(name: str) -> str:
+    return re.sub(r"[^0-9A-Za-z_]+", "_", name).strip("_")
+
+
+def _skipped_result(reason: str) -> dict[str, Any]:
+    return {
+        "code": 2,
+        "message": "skipped because a previous function failed",
+        "details": {"reason": reason},
+        "metrics": {},
+    }
+
+
+def _runner_failed_result(message: str, details: dict[str, Any]) -> dict[str, Any]:
+    return {"code": -1, "message": message, "details": details, "metrics": {}}
 
 
 def _board_to_dict(board: BoardProfile) -> dict[str, Any]:

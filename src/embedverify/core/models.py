@@ -38,6 +38,9 @@ class FunctionSpec:
     expect: dict[str, Any] | None = None
     timeout: int | None = None
     enabled: bool = True
+    label: str | None = None
+    skip_on_fail: bool = False
+    save_output: bool = False
 
 
 @dataclass(slots=True)
@@ -69,11 +72,14 @@ class ExecutionRecord:
 
     case_name: str
     function_name: str
+    label: str | None
     result: dict[str, Any]
     expectation: dict[str, Any]
     started_at: str
     finished_at: str
     duration_ms: int
+    skipped: bool = False
+    save_output: bool = False
 
 
 def utc_now_iso() -> str:

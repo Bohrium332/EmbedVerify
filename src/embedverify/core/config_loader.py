@@ -79,6 +79,9 @@ class ConfigLoader:
                     expect=dict(raw["expect"]) if isinstance(raw.get("expect"), dict) else None,
                     timeout=int(raw["timeout"]) if raw.get("timeout") is not None else None,
                     enabled=bool(raw.get("enabled", True)),
+                    label=str(raw["label"]) if isinstance(raw.get("label"), str) and raw["label"] else None,
+                    skip_on_fail=bool(raw.get("skip_on_fail", False)),
+                    save_output=bool(raw.get("save_output", False)),
                 )
             )
         return CaseSpec(
