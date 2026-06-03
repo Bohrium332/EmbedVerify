@@ -40,9 +40,11 @@ def _to_text(report: dict[str, Any]) -> str:
     ]
     for item in report.get("results", []):
         result = item["result"]
+        code = result.get("code", "unknown")
+        message = result.get("message", "")
         lines.append(
             f"- {item['case_name']}::{item['function_name']}: "
-            f"{result.get('status')} ({result.get('code')}) {result.get('message', '')}"
+            f"code={code} {message}"
         )
         metrics = result.get("metrics") or {}
         if metrics:
@@ -52,4 +54,3 @@ def _to_text(report: dict[str, Any]) -> str:
             lines.append(f"  expectation failures: {json.dumps(failures, ensure_ascii=False)}")
     lines.append("")
     return "\n".join(lines)
-
