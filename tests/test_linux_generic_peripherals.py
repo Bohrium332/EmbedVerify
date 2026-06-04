@@ -8,8 +8,13 @@ from embedverify.capabilities.linux_generic import (
     GenericI2CCapability,
     GenericNetworkCapability,
     GenericPCIeNVMeCapability,
+    GenericWiFiCapability,
+    _parse_bluetooth_controller,
+    _parse_bluetooth_devices,
     _parse_i2cdetect_list,
     _parse_i2cdetect_table,
+    _parse_iw_dev,
+    _parse_iw_scan,
 )
 from embedverify.core.runner import SuiteRunner, _invoke_function
 
@@ -111,11 +116,60 @@ class LinuxGenericPeripheralTests(unittest.TestCase):
         self.assertEqual(buses[0]["bus"], 7)
         self.assertEqual(addresses, [0x23])
 
+    def test_wifi_scan_parses_iw_output(self):
+        runner = MappingRunner(
+            {
+                ("iw", "dev"): CommandResult(
+                    0,
+                    "\n".join(["phy#0", "\tInterface wlan0", "\t\taddr 54:ef:33:9d:04:7e", "\t\ttype managed"]),
+                    "",
+                ),
+                ("ip", "link", "set", "wlan0", "up"): CommandResult(0, "", ""),
+                ("iw", "dev", "wlan0", "scan"): CommandResult(
+                    0,
+                    "\n".join(
+                        [
+                            "BSS 5c:02:14:a7:3c:0c(on wlan0)",
+                            "\tfreq: 5180",
+                            "\tsignal: -44.00 dBm",
+                            "\tSSID: WiFi_5G",
+                        ]
+                    ),
+                    "",
+                ),
+            }
+        )
+        cap = GenericWiFiCapability(runner)
+
+        with patch("embedverify.capabilities.linux_generic.shutil.which", return_value="/usr/bin/tool"):
+            result = cap.scan(interface="auto")
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["metrics"]["network_count"], 1)
+        self.assertEqual(result["details"]["networks"][0]["ssid"], "WiFi_5G")
+
+    def test_wireless_parser_helpers(self):
+        interfaces = _parse_iw_dev("phy#0\n\tInterface wlan0\n\t\taddr aa:bb\n\t\ttype managed\n")
+        networks = _parse_iw_scan("BSS aa:bb(on wlan0)\n\tfreq: 2412\n\tsignal: -50.00 dBm\n\tSSID: test\n")
+        controller = _parse_bluetooth_controller("Controller 54:EF:33:9D:04:7F (public)\n\tPowered: yes\n")
+        devices = _parse_bluetooth_devices("[\u001b[0;92mNEW\u001b[0m] Device 01:02:03:04:05:06 Demo\n")
+
+        self.assertEqual(interfaces[0]["name"], "wlan0")
+        self.assertEqual(networks[0]["ssid"], "test")
+        self.assertEqual(controller["address"], "54:EF:33:9D:04:7F")
+        self.assertEqual(devices[0]["name"], "Demo")
+
     def test_peripheral_suite_dry_run_loads(self):
         report = SuiteRunner(ROOT).run("suites/peripheral_smoke.yaml", dry_run=True)
 
         self.assertEqual(report["status"], "dry_run")
         self.assertEqual(report["suite"], "peripheral_smoke")
+
+    def test_connected_peripherals_suite_dry_run_loads(self):
+        report = SuiteRunner(ROOT).run("suites/connected_peripherals_smoke.yaml", dry_run=True)
+
+        self.assertEqual(report["status"], "dry_run")
+        self.assertEqual(report["suite"], "connected_peripherals_smoke")
 
     def test_invoke_new_function_entrypoint_has_no_status(self):
         class Network:
@@ -123,6 +177,16 @@ class LinuxGenericPeripheralTests(unittest.TestCase):
                 return {"code": 0, "message": "ok", "details": kwargs, "metrics": {"interface_count": 1}}
 
         result = _invoke_function("network.list_interfaces", {"include_loopback": False}, {"network": Network()})
+
+        self.assertEqual(result["code"], 0)
+        self.assertNotIn("status", result)
+
+    def test_invoke_camera_function_entrypoint_has_no_status(self):
+        class Camera:
+            def detect(self, **kwargs):
+                return {"code": 0, "message": "ok", "details": kwargs, "metrics": {"capture_ok": True}}
+
+        result = _invoke_function("camera.detect", {"sensor_id": 0}, {"camera": Camera()})
 
         self.assertEqual(result["code"], 0)
         self.assertNotIn("status", result)

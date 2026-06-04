@@ -1,0 +1,21 @@
+name: display_hdmi
+description: HDMI/display subsystem detection smoke test.
+module: display
+execution: sequential
+functions:
+  - name: display.detect
+    label: display_detect
+    save_output: true
+    params:
+      require_connected: false
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Display/HDMI subsystem must be detectable
+        - field: metrics.subsystem_present
+          operator: eq
+          value: true
+          message: Display subsystem must be present

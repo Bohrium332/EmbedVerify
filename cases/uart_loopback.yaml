@@ -1,0 +1,42 @@
+name: uart_loopback
+description: UART RX/TX loopback smoke test.
+module: uart
+execution: sequential
+functions:
+  - name: uart.list_ports
+    label: uart_ports
+    save_output: true
+    params:
+      expected_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: UART ports must be discoverable
+        - field: metrics.port_count
+          operator: gt
+          value: 0
+          message: UART port count must be positive
+
+  - name: uart.loopback
+    label: uart_loopback
+    skip_on_fail: true
+    save_output: true
+    params:
+      port: auto
+      payload: EV_UART_LOOPBACK
+      baudrate: 115200
+      timeout: 2.0
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: UART loopback must receive the transmitted payload
+        - field: metrics.matched
+          operator: eq
+          value: true
+          message: UART loopback payload must match

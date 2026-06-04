@@ -1,0 +1,45 @@
+name: csi_camera
+description: CSI camera Argus detection and one-frame capture smoke test.
+module: camera
+execution: sequential
+functions:
+  - name: camera.detect
+    label: camera_detect
+    save_output: true
+    params:
+      sensor_id: 0
+      probe_capture: true
+      timeout: 12
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: CSI camera must be available through Argus
+        - field: metrics.capture_ok
+          operator: eq
+          value: true
+          message: CSI camera probe capture must succeed
+
+  - name: camera.capture_smoke
+    label: camera_capture
+    skip_on_fail: true
+    save_output: true
+    params:
+      sensor_id: 0
+      width: 1280
+      height: 720
+      framerate: 30
+      timeout: 12
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: CSI one-frame capture must succeed
+        - field: metrics.capture_ok
+          operator: eq
+          value: true
+          message: CSI capture metric must be true

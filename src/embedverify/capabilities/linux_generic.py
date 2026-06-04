@@ -1102,6 +1102,398 @@ class GenericI2CCapability:
         return _i2c_buses_from_dev()
 
 
+class GenericCameraCapability:
+    """CSI camera checks via NVIDIA Argus/GStreamer and media nodes."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def detect(
+        self,
+        *,
+        sensor_id: int = 0,
+        probe_capture: bool = True,
+        timeout: int = 12,
+    ) -> dict[str, Any]:
+        tools = {
+            "gst_inspect": bool(shutil.which("gst-inspect-1.0")),
+            "gst_launch": bool(shutil.which("gst-launch-1.0")),
+            "nvgstcapture": bool(shutil.which("nvgstcapture-1.0")),
+        }
+        media_devices = _glob_paths("/dev/media*")
+        video_devices = _glob_paths("/dev/video*")
+        plugin_available = False
+        inspect_error = ""
+        if tools["gst_inspect"]:
+            try:
+                result = self.runner(["gst-inspect-1.0", "nvarguscamerasrc"], timeout)
+                plugin_available = result.returncode == 0
+                inspect_error = _tail_text(result.stderr or result.stdout, 1200) if result.returncode != 0 else ""
+            except subprocess.TimeoutExpired:
+                inspect_error = "gst-inspect timed out"
+        capture_result: dict[str, Any] | None = None
+        if probe_capture and plugin_available and tools["gst_launch"]:
+            capture_result = self._argus_capture(sensor_id=sensor_id, timeout=timeout)
+        success = plugin_available and (
+            not probe_capture or bool(capture_result and capture_result.get("capture_ok"))
+        )
+        message = "CSI camera detected" if success else "CSI camera not available"
+        return {
+            "code": 0 if success else -1,
+            "message": message,
+            "details": {
+                "sensor_id": sensor_id,
+                "probe_capture": probe_capture,
+                "tools": tools,
+                "plugin_available": plugin_available,
+                "inspect_error": inspect_error,
+                "media_devices": media_devices,
+                "video_devices": video_devices,
+                "capture_probe": capture_result,
+            },
+            "metrics": {
+                "plugin_available": plugin_available,
+                "media_device_count": len(media_devices),
+                "video_device_count": len(video_devices),
+                "capture_ok": bool(capture_result and capture_result.get("capture_ok")),
+            },
+        }
+
+    def capture_smoke(
+        self,
+        *,
+        sensor_id: int = 0,
+        width: int = 1280,
+        height: int = 720,
+        framerate: int = 30,
+        timeout: int = 12,
+    ) -> dict[str, Any]:
+        if not shutil.which("gst-launch-1.0"):
+            return _failed(-2, "gst-launch-1.0 not found: install gstreamer tools", {"tool": "gst-launch-1.0"})
+        result = self._argus_capture(
+            sensor_id=sensor_id,
+            width=width,
+            height=height,
+            framerate=framerate,
+            timeout=timeout,
+        )
+        return {
+            "code": 0 if result["capture_ok"] else -1,
+            "message": "CSI capture smoke passed" if result["capture_ok"] else "CSI capture smoke failed",
+            "details": result,
+            "metrics": {"capture_ok": result["capture_ok"], "duration_ms": result["duration_ms"]},
+        }
+
+    def _argus_capture(
+        self,
+        *,
+        sensor_id: int,
+        width: int = 1280,
+        height: int = 720,
+        framerate: int = 30,
+        timeout: int,
+    ) -> dict[str, Any]:
+        caps = f"video/x-raw(memory:NVMM),width={width},height={height},framerate={framerate}/1"
+        cmd = [
+            "gst-launch-1.0",
+            "-q",
+            "nvarguscamerasrc",
+            f"sensor-id={sensor_id}",
+            "num-buffers=1",
+            "!",
+            caps,
+            "!",
+            "fakesink",
+        ]
+        started = time.perf_counter()
+        try:
+            result = self.runner(cmd, timeout)
+        except subprocess.TimeoutExpired:
+            return {
+                "capture_ok": False,
+                "sensor_id": sensor_id,
+                "width": width,
+                "height": height,
+                "framerate": framerate,
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+                "error": "gst-launch timed out",
+            }
+        output = "\n".join(item for item in (result.stdout, result.stderr) if item)
+        output_lower = output.lower()
+        has_error = (
+            result.returncode != 0
+            or "no cameras available" in output_lower
+            or "error generated" in output_lower
+            or "erroneous pipeline" in output_lower
+        )
+        return {
+            "capture_ok": not has_error,
+            "sensor_id": sensor_id,
+            "width": width,
+            "height": height,
+            "framerate": framerate,
+            "exit_code": result.returncode,
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "output_tail": _tail_text(output, 3000),
+        }
+
+
+class GenericWiFiCapability:
+    """Wi-Fi interface detection and scan."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def detect(self, *, interface: str = "auto", expected_count: int = 1, timeout: int = 10) -> dict[str, Any]:
+        interfaces = self._interfaces(timeout)
+        resolved = _resolve_named_interface(interface, interfaces)
+        matches = interfaces if interface == "auto" else [item for item in interfaces if item.get("name") == resolved]
+        success = len(matches) >= expected_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(matches)} Wi-Fi interface(s)"
+                if success
+                else f"expected at least {expected_count} Wi-Fi interface(s), found {len(matches)}"
+            ),
+            "details": {"interface": interface, "resolved_interface": resolved, "interfaces": interfaces},
+            "metrics": {"interface_count": len(matches)},
+        }
+
+    def scan(
+        self,
+        *,
+        interface: str = "auto",
+        bring_up: bool = True,
+        min_network_count: int = 1,
+        timeout: int = 20,
+    ) -> dict[str, Any]:
+        interfaces = self._interfaces(timeout)
+        resolved = _resolve_named_interface(interface, interfaces)
+        if not resolved:
+            return _failed(-1, "Wi-Fi interface not found", {"interface": interface, "interfaces": interfaces})
+        if bring_up and shutil.which("ip"):
+            try:
+                self.runner(["ip", "link", "set", resolved, "up"], 5)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+
+        networks: list[dict[str, Any]] = []
+        method_used = ""
+        error_tail = ""
+        if shutil.which("iw"):
+            try:
+                result = self.runner(["iw", "dev", resolved, "scan"], timeout)
+                if result.returncode == 0:
+                    networks = _parse_iw_scan(result.stdout)
+                    method_used = "iw"
+                else:
+                    error_tail = _tail_text(result.stderr or result.stdout, 1200)
+            except subprocess.TimeoutExpired:
+                error_tail = "iw scan timed out"
+        if not networks and shutil.which("nmcli"):
+            try:
+                result = self.runner(
+                    ["nmcli", "-t", "-f", "SSID,BSSID,SIGNAL,CHAN,FREQ,SECURITY", "device", "wifi", "list", "ifname", resolved],
+                    timeout,
+                )
+                if result.returncode == 0:
+                    networks = _parse_nmcli_wifi(result.stdout)
+                    method_used = "nmcli"
+                else:
+                    error_tail = _tail_text(result.stderr or result.stdout, 1200)
+            except subprocess.TimeoutExpired:
+                error_tail = "nmcli wifi list timed out"
+        success = len(networks) >= min_network_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(networks)} Wi-Fi network(s)"
+                if success
+                else f"expected at least {min_network_count} Wi-Fi network(s), found {len(networks)}"
+            ),
+            "details": {
+                "interface": resolved,
+                "bring_up": bring_up,
+                "method_used": method_used,
+                "error_tail": error_tail,
+                "networks": networks[:30],
+            },
+            "metrics": {"network_count": len(networks)},
+        }
+
+    def _interfaces(self, timeout: int) -> list[dict[str, Any]]:
+        if not shutil.which("iw"):
+            return []
+        try:
+            result = self.runner(["iw", "dev"], timeout)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return []
+        if result.returncode != 0:
+            return []
+        return _parse_iw_dev(result.stdout)
+
+
+class GenericBluetoothCapability:
+    """Bluetooth controller detection and scan via bluetoothctl."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def detect(self, *, require_powered: bool = True, timeout: int = 10) -> dict[str, Any]:
+        if not shutil.which("bluetoothctl"):
+            return _failed(-2, "bluetoothctl not found: install bluez", {"tool": "bluetoothctl"})
+        try:
+            result = self.runner(["bluetoothctl", "show"], timeout)
+        except subprocess.TimeoutExpired:
+            return _failed(-1, "bluetoothctl show timed out", {"timeout": timeout})
+        controller = _parse_bluetooth_controller(result.stdout)
+        powered = str(controller.get("powered") or "").lower() == "yes"
+        success = bool(controller.get("address")) and (powered or not require_powered)
+        return {
+            "code": 0 if success else -1,
+            "message": "Bluetooth controller detected" if success else "Bluetooth controller not ready",
+            "details": {
+                "require_powered": require_powered,
+                "controller": controller,
+                "exit_code": result.returncode,
+                "stderr_tail": _tail_text(result.stderr, 1200),
+            },
+            "metrics": {"controller_count": 1 if controller.get("address") else 0, "powered": powered},
+        }
+
+    def scan(self, *, timeout: int = 8, min_device_count: int = 1) -> dict[str, Any]:
+        if not shutil.which("bluetoothctl"):
+            return _failed(-2, "bluetoothctl not found: install bluez", {"tool": "bluetoothctl"})
+        output = ""
+        exit_code = 0
+        try:
+            result = self.runner(["bluetoothctl", "--timeout", str(timeout), "scan", "on"], timeout + 3)
+            output = result.stdout + "\n" + result.stderr
+            exit_code = result.returncode
+        except subprocess.TimeoutExpired:
+            output = "bluetoothctl scan timed out"
+            exit_code = -1
+        finally:
+            try:
+                self.runner(["bluetoothctl", "scan", "off"], 5)
+            except Exception:
+                pass
+        devices = _parse_bluetooth_devices(output)
+        if not devices:
+            try:
+                result = self.runner(["bluetoothctl", "devices"], 5)
+                devices = _parse_bluetooth_devices(result.stdout)
+            except Exception:
+                pass
+        success = len(devices) >= min_device_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"Bluetooth scan found {len(devices)} device(s)"
+                if success
+                else f"Bluetooth scan found {len(devices)} device(s), expected {min_device_count}"
+            ),
+            "details": {"devices": devices[:80], "exit_code": exit_code, "output_tail": _tail_text(_strip_ansi(output), 2000)},
+            "metrics": {"device_count": len(devices)},
+        }
+
+
+class GenericDisplayCapability:
+    """Display/HDMI subsystem detection."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def detect(self, *, require_connected: bool = False, timeout: int = 10) -> dict[str, Any]:
+        connectors = _display_connectors()
+        connected = [item for item in connectors if item.get("status") == "connected"]
+        xrandr_output = ""
+        xrandr_error = ""
+        if shutil.which("xrandr"):
+            try:
+                result = self.runner(["xrandr", "--query"], timeout)
+                xrandr_output = result.stdout
+                xrandr_error = result.stderr
+                if result.returncode == 0:
+                    connectors.extend(_parse_xrandr_connectors(result.stdout))
+            except subprocess.TimeoutExpired:
+                xrandr_error = "xrandr timed out"
+        driver_paths = _display_driver_paths()
+        hdmi_audio_inputs = _glob_paths("/sys/devices/platform/bus@0/3510000.hda/sound/card*/input*")
+        subsystem_present = bool(connectors or driver_paths or hdmi_audio_inputs)
+        connected = [item for item in connectors if item.get("status") == "connected"]
+        success = subsystem_present and (bool(connected) or not require_connected)
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                "Display subsystem detected"
+                if success
+                else "Display/HDMI requirement not met"
+            ),
+            "details": {
+                "require_connected": require_connected,
+                "connectors": connectors,
+                "driver_paths": driver_paths,
+                "hdmi_audio_inputs": hdmi_audio_inputs,
+                "xrandr_error": _tail_text(xrandr_error, 1200),
+                "xrandr_output_tail": _tail_text(xrandr_output, 1200),
+            },
+            "metrics": {
+                "subsystem_present": subsystem_present,
+                "connector_count": len(connectors),
+                "connected_count": len(connected),
+                "hdmi_audio_input_count": len(hdmi_audio_inputs),
+            },
+        }
+
+
+class GenericUARTCapability:
+    """UART port discovery and loopback."""
+
+    def list_ports(self, *, expected_count: int = 1) -> dict[str, Any]:
+        ports = _uart_ports()
+        success = len(ports) >= expected_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(ports)} UART/serial port(s)"
+                if success
+                else f"expected at least {expected_count} UART/serial port(s), found {len(ports)}"
+            ),
+            "details": {"expected_count": expected_count, "ports": ports},
+            "metrics": {"port_count": len(ports)},
+        }
+
+    def loopback(
+        self,
+        *,
+        port: str = "auto",
+        payload: str = "EV_UART_LOOPBACK",
+        baudrate: int = 115200,
+        timeout: float = 2.0,
+    ) -> dict[str, Any]:
+        ports = [item["path"] for item in _uart_ports(prefer_real_uart=True)]
+        candidates = ports if port == "auto" else [port]
+        attempts = []
+        for candidate in candidates:
+            attempt = _uart_loopback_attempt(candidate, payload=payload, baudrate=baudrate, timeout=timeout)
+            attempts.append(attempt)
+            if attempt.get("matched"):
+                return {
+                    "code": 0,
+                    "message": f"UART loopback passed on {candidate}",
+                    "details": {"port": candidate, "attempts": attempts},
+                    "metrics": {"matched": True, "duration_ms": attempt.get("duration_ms", 0)},
+                }
+        return {
+            "code": -1,
+            "message": "UART loopback failed on candidate port(s)",
+            "details": {"port": port, "candidates": candidates, "attempts": attempts},
+            "metrics": {"matched": False, "attempt_count": len(attempts)},
+        }
+
+
 def _failed(code: int, message: str, details: dict[str, Any]) -> dict[str, Any]:
     return {"code": code, "message": message, "details": details, "metrics": {}}
 
@@ -1621,6 +2013,255 @@ def _normalize_i2c_addresses(values: list[Any]) -> list[int]:
         except ValueError:
             continue
     return sorted(dict.fromkeys(addresses))
+
+
+def _glob_paths(pattern: str) -> list[str]:
+    return sorted(str(path) for path in Path("/").glob(pattern.lstrip("/")))
+
+
+def _parse_iw_dev(output: str) -> list[dict[str, Any]]:
+    interfaces: list[dict[str, Any]] = []
+    current_phy = ""
+    current: dict[str, Any] | None = None
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("phy#"):
+            current_phy = line
+        elif line.startswith("Interface "):
+            if current:
+                interfaces.append(current)
+            current = {"name": line.split()[1], "phy": current_phy}
+        elif current is not None and line.startswith("addr "):
+            current["mac_address"] = line.split(maxsplit=1)[1]
+        elif current is not None and line.startswith("type "):
+            current["type"] = line.split(maxsplit=1)[1]
+        elif current is not None and line.startswith("txpower "):
+            current["txpower"] = line.split(maxsplit=1)[1]
+    if current:
+        interfaces.append(current)
+    return interfaces
+
+
+def _resolve_named_interface(name: str, interfaces: list[dict[str, Any]]) -> str:
+    if name != "auto":
+        return name
+    for item in interfaces:
+        item_name = str(item.get("name") or "")
+        if item_name:
+            return item_name
+    return ""
+
+
+def _parse_iw_scan(output: str) -> list[dict[str, Any]]:
+    networks: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("BSS "):
+            if current and current.get("ssid"):
+                networks.append(current)
+            bssid = line.split()[1].split("(")[0]
+            current = {"bssid": bssid, "ssid": "", "signal_dbm": None, "freq_mhz": None, "channel": None}
+        elif current is not None and line.startswith("freq:"):
+            current["freq_mhz"] = _safe_int(line.split(":", 1)[1].strip())
+        elif current is not None and line.startswith("signal:"):
+            match = re.search(r"(-?\d+(?:\.\d+)?)\s*dBm", line)
+            if match:
+                current["signal_dbm"] = float(match.group(1))
+        elif current is not None and line.startswith("SSID:"):
+            current["ssid"] = line.split(":", 1)[1].strip()
+        elif current is not None and "DS Parameter set: channel" in line:
+            match = re.search(r"channel\s+(\d+)", line)
+            if match:
+                current["channel"] = int(match.group(1))
+    if current and current.get("ssid"):
+        networks.append(current)
+    return sorted(networks, key=lambda item: float(item.get("signal_dbm") or -999), reverse=True)
+
+
+def _parse_nmcli_wifi(output: str) -> list[dict[str, Any]]:
+    networks = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(":")
+        if len(parts) < 6 or not parts[0]:
+            continue
+        networks.append(
+            {
+                "ssid": parts[0],
+                "bssid": parts[1],
+                "signal_percent": _safe_int(parts[2]),
+                "channel": _safe_int(parts[3]),
+                "freq_mhz": _safe_int(parts[4]),
+                "security": parts[5],
+            }
+        )
+    return networks
+
+
+def _parse_bluetooth_controller(output: str) -> dict[str, Any]:
+    clean = _strip_ansi(output)
+    controller: dict[str, Any] = {}
+    for line in clean.splitlines():
+        line = line.strip()
+        if line.startswith("Controller "):
+            parts = line.split(maxsplit=2)
+            if len(parts) >= 2:
+                controller["address"] = parts[1]
+            if len(parts) >= 3 and parts[2].strip("()"):
+                controller["transport"] = parts[2].strip("()")
+        elif ":" in line:
+            key, value = line.split(":", 1)
+            normalized = key.strip().lower().replace(" ", "_")
+            if normalized in ("name", "alias", "powered", "discoverable", "pairable", "discovering"):
+                controller[normalized] = value.strip()
+    return controller
+
+
+def _parse_bluetooth_devices(output: str) -> list[dict[str, Any]]:
+    clean = _strip_ansi(output)
+    devices: dict[str, dict[str, Any]] = {}
+    for line in clean.splitlines():
+        match = re.search(r"(?:Device\s+)?([0-9A-F]{2}(?::[0-9A-F]{2}){5})\s*(.*)$", line.strip(), re.I)
+        if not match:
+            continue
+        address = match.group(1).upper()
+        name = match.group(2).strip()
+        if name.startswith("RSSI:"):
+            continue
+        item = devices.setdefault(address, {"address": address, "name": ""})
+        if name and not name.startswith("["):
+            item["name"] = name
+    return sorted(devices.values(), key=lambda item: item["address"])
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x01|\x02", "", text)
+
+
+def _display_connectors() -> list[dict[str, Any]]:
+    connectors = []
+    for status_path in sorted(Path("/sys/class/drm").glob("card*-*/status")):
+        connector = status_path.parent.name
+        connectors.append(
+            {
+                "name": connector,
+                "status": _read_text(status_path),
+                "enabled": _read_text(status_path.parent / "enabled"),
+                "modes": _read_text(status_path.parent / "modes").splitlines(),
+            }
+        )
+    return connectors
+
+
+def _parse_xrandr_connectors(output: str) -> list[dict[str, Any]]:
+    connectors = []
+    for line in output.splitlines():
+        if " connected" not in line and " disconnected" not in line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        connectors.append({"name": parts[0], "status": parts[1], "source": "xrandr", "raw": line.strip()})
+    return connectors
+
+
+def _display_driver_paths() -> list[str]:
+    candidates = [
+        "/sys/bus/platform/drivers/tegra-hdmi",
+        "/sys/bus/platform/drivers/tegra-display-hub",
+        "/sys/module/snd_hda_codec_hdmi",
+        "/sys/module/tegra_drm",
+        "/sys/devices/platform/13800000.display",
+    ]
+    return [path for path in candidates if Path(path).exists()]
+
+
+def _uart_ports(*, prefer_real_uart: bool = False) -> list[dict[str, Any]]:
+    patterns = ["/dev/ttyTHS*", "/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyS*"]
+    ports = []
+    for pattern in patterns:
+        for path in sorted(Path("/").glob(pattern.lstrip("/"))):
+            device_link = Path("/sys/class/tty") / path.name / "device"
+            resolved = ""
+            try:
+                resolved = str(device_link.resolve())
+            except OSError:
+                pass
+            if prefer_real_uart and path.name.startswith("ttyS") and "serial8250" in resolved:
+                continue
+            ports.append({"path": str(path), "name": path.name, "device": resolved})
+    return ports
+
+
+def _uart_loopback_attempt(port: str, *, payload: str, baudrate: int, timeout: float) -> dict[str, Any]:
+    import select
+    import termios
+
+    speed = _termios_speed(termios, baudrate)
+    started = time.perf_counter()
+    payload_bytes = payload.encode("utf-8")
+    if not payload_bytes.endswith(b"\n"):
+        payload_bytes += b"\n"
+    try:
+        fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError as exc:
+        return {"port": port, "matched": False, "error": str(exc), "duration_ms": 0}
+    received = b""
+    try:
+        attrs = termios.tcgetattr(fd)
+        attrs[0] = 0
+        attrs[1] = 0
+        attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+        attrs[3] = 0
+        attrs[4] = speed
+        attrs[5] = speed
+        attrs[6][termios.VMIN] = 0
+        attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        termios.tcflush(fd, termios.TCIOFLUSH)
+        os.write(fd, payload_bytes)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            readable, _, _ = select.select([fd], [], [], 0.1)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(fd, 1024)
+            except BlockingIOError:
+                chunk = b""
+            if chunk:
+                received += chunk
+                if payload_bytes in received:
+                    break
+    except OSError as exc:
+        return {
+            "port": port,
+            "matched": False,
+            "error": str(exc),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+        }
+    finally:
+        os.close(fd)
+    return {
+        "port": port,
+        "matched": payload_bytes in received,
+        "payload": payload,
+        "received": received.decode("utf-8", errors="replace"),
+        "duration_ms": int((time.perf_counter() - started) * 1000),
+    }
+
+
+def _termios_speed(termios_module: Any, baudrate: int) -> int:
+    return int(getattr(termios_module, f"B{baudrate}", termios_module.B115200))
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _read_text(path: Path) -> str:

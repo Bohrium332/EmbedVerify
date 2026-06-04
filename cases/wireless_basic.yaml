@@ -1,0 +1,79 @@
+name: wireless_basic
+description: Wi-Fi and Bluetooth module detection and scan smoke test.
+module: wireless
+execution: sequential
+functions:
+  - name: wifi.detect
+    label: wifi_detect
+    save_output: true
+    params:
+      interface: auto
+      expected_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Wi-Fi interface must be detected
+        - field: metrics.interface_count
+          operator: gt
+          value: 0
+          message: Wi-Fi interface count must be positive
+
+  - name: wifi.scan
+    label: wifi_scan
+    skip_on_fail: true
+    save_output: true
+    params:
+      interface: auto
+      bring_up: true
+      min_network_count: 1
+      timeout: 20
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Wi-Fi scan must succeed
+        - field: metrics.network_count
+          operator: gt
+          value: 0
+          message: Wi-Fi scan must find at least one network
+
+  - name: bluetooth.detect
+    label: bluetooth_detect
+    save_output: true
+    params:
+      require_powered: true
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Bluetooth controller must be detected
+        - field: metrics.powered
+          operator: eq
+          value: true
+          message: Bluetooth controller must be powered
+
+  - name: bluetooth.scan
+    label: bluetooth_scan
+    skip_on_fail: true
+    save_output: true
+    params:
+      timeout: 8
+      min_device_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Bluetooth scan must succeed
+        - field: metrics.device_count
+          operator: gt
+          value: 0
+          message: Bluetooth scan must find at least one device
