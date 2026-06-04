@@ -1137,7 +1137,7 @@ class GenericCameraCapability:
         success = plugin_available and (
             not probe_capture or bool(capture_result and capture_result.get("capture_ok"))
         )
-        message = "CSI camera detected" if success else "CSI camera not available"
+        message = "CSI camera detected" if success else _camera_failure_message(capture_result)
         return {
             "code": 0 if success else -1,
             "message": message,
@@ -1150,6 +1150,7 @@ class GenericCameraCapability:
                 "media_devices": media_devices,
                 "video_devices": video_devices,
                 "capture_probe": capture_result,
+                "precondition_hints": _camera_precondition_hints(),
             },
             "metrics": {
                 "plugin_available": plugin_available,
@@ -2017,6 +2018,23 @@ def _normalize_i2c_addresses(values: list[Any]) -> list[int]:
 
 def _glob_paths(pattern: str) -> list[str]:
     return sorted(str(path) for path in Path("/").glob(pattern.lstrip("/")))
+
+
+def _camera_failure_message(capture_result: dict[str, Any] | None) -> str:
+    output = str((capture_result or {}).get("output_tail") or "").lower()
+    if "connection refused" in output or "failed to create cameraprovider" in output:
+        return "CSI camera provider unavailable; check nvargus-daemon and camera device-tree overlay"
+    if "no cameras available" in output:
+        return "CSI camera not enumerated; check jetson-io camera overlay, sensor_id, and ribbon cable"
+    return "CSI camera not available"
+
+
+def _camera_precondition_hints() -> list[str]:
+    return [
+        "Use jetson-io.py manually to select the correct CSI camera/device-tree overlay, then reboot.",
+        "Verify the CSI ribbon cable orientation and that the sensor is attached to the selected sensor_id.",
+        "After configuration, rerun camera.detect or cases/csi_camera.yaml.",
+    ]
 
 
 def _parse_iw_dev(output: str) -> list[dict[str, Any]]:
