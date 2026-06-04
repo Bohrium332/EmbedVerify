@@ -52,6 +52,12 @@
 - Verified standalone UART loopback on `/dev/ttyTHS1` after confirming the
   J401 UART1 mapping. The smoke payload is `EVUART1` because the current setup
   shows abnormal NUL-prefixed data for payloads of 8 bytes or longer.
+- Added SPI capability and Function coverage:
+  `spi.detect`, `spi.transfer`, and `spi.loopback`.
+- Added standalone `cases/spi_loopback.yaml` for MOSI/MISO shorted-loopback
+  smoke testing.
+- Verified SPI loopback on the Jetson for `/dev/spidev0.0`,
+  `/dev/spidev0.1`, `/dev/spidev1.0`, and `/dev/spidev1.1`.
 
 ## Latest USB Storage Passing Metrics
 
@@ -262,6 +268,38 @@ next action: track as a separate UART stress/driver investigation, not as the
 smoke pass/fail signal
 ```
 
+## Latest SPI Loopback
+
+```text
+date: 2026-06-04
+board: recomputer_j401
+case: spi_loopback
+request_id: 7137697cb6a2
+report_status: passed
+report dir: /tmp/embedverify-spi-reports/20260604T092210Z_7137697cb6a2_passed
+speed_hz: 500000
+mode: 0
+bits_per_word: 8
+```
+
+Detected nodes:
+
+```text
+/dev/spidev0.0: controller=spi0, sysfs=3210000.spi, loopback passed
+/dev/spidev0.1: controller=spi0, sysfs=3210000.spi, loopback passed
+/dev/spidev1.0: controller=spi1, sysfs=3230000.spi, loopback passed
+/dev/spidev1.1: controller=spi1, sysfs=3230000.spi, loopback passed
+```
+
+SPI scope:
+
+```text
+included: detect, transfer, loopback
+deferred: read_register, write_register, read_write_verify
+reason: register operations need a real SPI device protocol; MOSI/MISO
+loopback alone cannot define register semantics
+```
+
 Regression after CSI/HDMI stabilization:
 
 ```text
@@ -279,18 +317,16 @@ reason: no USB mass-storage disk was detected in the current attached-device set
 
 ## Next Round
 
-- Push the verified CSI/HDMI stabilization and documentation update after
-  final local status checks.
-- Keep USB as a regression baseline only when a USB mass-storage device is
-  actually attached.
-- Keep `peripheral_smoke` and `connected_peripherals_smoke` as the current
-  non-UART review baselines.
+- Commit and push the verified SPI implementation after final status checks.
+- Keep `cases/spi_loopback.yaml` standalone for now; do not add it to the broad
+  attached-device suite unless the review scope explicitly requires SPI wiring.
+- Use `linshi/EmbedVerify_个人使用速查.md` as the personal command reference, not
+  as an engineering spec.
 
 ## Round After Next
 
-- Decide whether to add `cases/uart_loopback.yaml` back into
-  `connected_peripherals_smoke`, now that standalone UART smoke passed.
-- Add the next hardware protocol only after the required external fixture is
-  available, for example CAN transceiver/loopback or SPI/I2S wiring.
-- Start validating a second board by adding a board YAML first, then run
+- After the current review returns, decide whether to broaden protocol coverage
+  with another available interface or improve the case/suite selection model.
+- Revisit UART after the user provides a replacement loopback implementation.
+- Start validating a second board only by adding a board YAML first, then run
   dry-run, one case, and one suite in that order.

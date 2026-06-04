@@ -9,6 +9,7 @@ sudo apt-get install -y \
   python3-venv \
   python3-pip \
   python3-serial \
+  python3-spidev \
   usbutils \
   util-linux \
   coreutils \

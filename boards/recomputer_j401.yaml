@@ -10,6 +10,7 @@ capabilities:
   fan: linux_generic
   gpio: linux_generic
   i2c: linux_generic
+  spi: linux_generic
   camera: linux_generic
   wifi: linux_generic
   bluetooth: linux_generic
@@ -42,6 +43,10 @@ interfaces:
   i2c:
     items:
       - 40pin_header_i2c
+  spi:
+    items:
+      - 40pin_header_spi0
+      - 40pin_header_spi3
   camera:
     items:
       - csi_0
@@ -68,6 +73,7 @@ tools_required:
   - ping
   - hwclock
   - i2cdetect
+  - python3-spidev
   - gst-launch-1.0
   - gst-inspect-1.0
   - iw

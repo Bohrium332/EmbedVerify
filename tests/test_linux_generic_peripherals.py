@@ -12,6 +12,7 @@ from embedverify.capabilities.linux_generic import (
     GenericNetworkCapability,
     GenericPCIeNVMeCapability,
     GenericUARTCapability,
+    GenericSPICapability,
     GenericWiFiCapability,
     _parse_bluetooth_controller,
     _parse_bluetooth_devices,
@@ -296,6 +297,46 @@ class LinuxGenericPeripheralTests(unittest.TestCase):
         self.assertEqual(result["details"]["attempts"][0]["received"], "EV_UART_LOOPBACK")
         self.assertNotIn("status", result)
 
+    def test_spi_loopback_uses_spidev_transfer(self):
+        opened = []
+        transfers = []
+
+        class FakeSpiDev:
+            def open(self, bus, chip_select):
+                opened.append((bus, chip_select))
+
+            def xfer2(self, values):
+                transfers.append(values)
+                return values
+
+            def close(self):
+                pass
+
+        fake_spidev = types.SimpleNamespace(SpiDev=FakeSpiDev)
+        devices = [
+            {
+                "name": "spidev0.0",
+                "path": "/dev/spidev0.0",
+                "bus": 0,
+                "chip_select": 0,
+                "readable": True,
+                "writable": True,
+            }
+        ]
+
+        with (
+            patch.dict("sys.modules", {"spidev": fake_spidev}),
+            patch("embedverify.capabilities.linux_generic._spi_devices_from_dev", return_value=devices),
+            patch("embedverify.capabilities.linux_generic.Path.exists", return_value=True),
+        ):
+            result = GenericSPICapability().loopback(device="/dev/spidev0.0", test_pattern="EVSPI")
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(opened, [(0, 0)])
+        self.assertEqual(transfers, [[69, 86, 83, 80, 73]])
+        self.assertTrue(result["metrics"]["matched"])
+        self.assertNotIn("status", result)
+
     def test_peripheral_suite_dry_run_loads(self):
         report = SuiteRunner(ROOT).run("suites/peripheral_smoke.yaml", dry_run=True)
 
@@ -324,6 +365,16 @@ class LinuxGenericPeripheralTests(unittest.TestCase):
                 return {"code": 0, "message": "ok", "details": kwargs, "metrics": {"capture_ok": True}}
 
         result = _invoke_function("camera.detect", {"sensor_id": 0}, {"camera": Camera()})
+
+        self.assertEqual(result["code"], 0)
+        self.assertNotIn("status", result)
+
+    def test_invoke_spi_function_entrypoint_has_no_status(self):
+        class SPI:
+            def detect(self, **kwargs):
+                return {"code": 0, "message": "ok", "details": kwargs, "metrics": {"device_count": 1}}
+
+        result = _invoke_function("spi.detect", {"device": "auto"}, {"spi": SPI()})
 
         self.assertEqual(result["code"], 0)
         self.assertNotIn("status", result)

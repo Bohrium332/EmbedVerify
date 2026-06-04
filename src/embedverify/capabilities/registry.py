@@ -17,6 +17,7 @@ from .linux_generic import (
     GenericNetworkCapability,
     GenericPCIeNVMeCapability,
     GenericRTCCapability,
+    GenericSPICapability,
     GenericStorageCapability,
     GenericUARTCapability,
     GenericUSBCapability,
@@ -46,6 +47,8 @@ def build_capability_registry(board: BoardProfile) -> dict[str, Any]:
             registry[name] = GenericGPIOCapability()
         elif name == "i2c" and implementation == "linux_generic":
             registry[name] = GenericI2CCapability()
+        elif name == "spi" and implementation == "linux_generic":
+            registry[name] = GenericSPICapability()
         elif name == "camera" and implementation == "linux_generic":
             registry[name] = GenericCameraCapability()
         elif name == "wifi" and implementation == "linux_generic":

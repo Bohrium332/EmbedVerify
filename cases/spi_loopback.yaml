@@ -1,0 +1,45 @@
+name: spi_loopback
+description: SPI spidev discovery and MOSI/MISO loopback smoke test.
+module: spi
+execution: sequential
+functions:
+  - name: spi.detect
+    label: spi_devices
+    save_output: true
+    params:
+      device: auto
+      expected_count: 1
+      require_access: false
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: SPI device discovery must succeed
+        - field: metrics.device_count
+          operator: gt
+          value: 0
+          message: At least one SPI spidev node must exist
+
+  - name: spi.loopback
+    label: spi_loopback
+    skip_on_fail: true
+    save_output: true
+    params:
+      device: auto
+      test_pattern: EVSPI
+      speed_hz: 500000
+      mode: 0
+      bits_per_word: 8
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: SPI MOSI/MISO loopback must pass
+        - field: metrics.matched
+          operator: eq
+          value: true
+          message: Received bytes must match transmitted bytes

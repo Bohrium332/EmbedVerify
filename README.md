@@ -64,6 +64,13 @@ header pins and Linux device mapping are confirmed. CSI camera tests expect the
 correct Jetson camera device-tree overlay to be selected manually with
 `jetson-io.py` and the board rebooted before running the suite.
 
+SPI spidev discovery, transfer, and MOSI/MISO loopback are available as
+standalone functions. With MOSI and MISO shorted, run:
+
+```bash
+sudo env PYTHONPATH=src python3 -m embedverify.cli.main run-case cases/spi_loopback.yaml
+```
+
 The runner auto-detects the first USB storage device. If the selected partition
 is not mounted and the command is running as root, the write-speed test mounts it
 temporarily under `/mnt/embedverify-*`, writes `.ev_write_test.bin`, removes the
@@ -84,7 +91,7 @@ Install or verify these tools on the board:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3 python3-venv python3-pip python3-serial usbutils util-linux coreutils hdparm iproute2 iputils-ping i2c-tools gpiod wireless-tools iw bluetooth bluez x11-xserver-utils gstreamer1.0-tools
+sudo apt-get install -y python3 python3-venv python3-pip python3-serial python3-spidev usbutils util-linux coreutils hdparm iproute2 iputils-ping i2c-tools gpiod wireless-tools iw bluetooth bluez x11-xserver-utils gstreamer1.0-tools
 ```
 
 Or use the helper script from the repository root:

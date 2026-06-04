@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -1102,6 +1103,102 @@ class GenericI2CCapability:
         return _i2c_buses_from_dev()
 
 
+class GenericSPICapability:
+    """SPI device discovery and transfers through Linux spidev."""
+
+    def detect(
+        self,
+        *,
+        device: str = "auto",
+        expected_count: int = 1,
+        require_access: bool = False,
+    ) -> dict[str, Any]:
+        devices = _spi_devices_from_dev()
+        matches = devices if device in ("", "auto") else _matching_spi_devices(device, devices)
+        success = len(matches) >= expected_count
+        if require_access:
+            success = success and all(item.get("readable") and item.get("writable") for item in matches)
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(matches)} SPI device(s)"
+                if success
+                else f"expected at least {expected_count} SPI device(s), found {len(matches)}"
+            ),
+            "details": {
+                "device": device,
+                "expected_count": expected_count,
+                "require_access": require_access,
+                "devices": matches,
+            },
+            "metrics": {"device_count": len(matches)},
+        }
+
+    def transfer(
+        self,
+        *,
+        device: str = "auto",
+        tx_hex: str = "",
+        tx_text: str = "EV_SPI_TRANSFER",
+        tx_bytes: list[Any] | None = None,
+        speed_hz: int = 500000,
+        mode: int = 0,
+        bits_per_word: int = 8,
+    ) -> dict[str, Any]:
+        payload = _spi_payload(tx_hex=tx_hex, tx_text=tx_text, tx_bytes=tx_bytes)
+        if isinstance(payload, dict):
+            return payload
+        transfer = _spi_transfer(
+            device=device,
+            payload=payload,
+            speed_hz=speed_hz,
+            mode=mode,
+            bits_per_word=bits_per_word,
+        )
+        if transfer.get("code") != 0:
+            return transfer
+        return {
+            "code": 0,
+            "message": f"SPI transfer completed on {transfer['details']['device']}",
+            "details": transfer["details"],
+            "metrics": transfer["metrics"],
+        }
+
+    def loopback(
+        self,
+        *,
+        device: str = "auto",
+        test_pattern: str = "EVSPI",
+        tx_hex: str = "",
+        speed_hz: int = 500000,
+        mode: int = 0,
+        bits_per_word: int = 8,
+    ) -> dict[str, Any]:
+        payload = _spi_payload(tx_hex=tx_hex, tx_text=test_pattern, tx_bytes=None)
+        if isinstance(payload, dict):
+            return payload
+        transfer = _spi_transfer(
+            device=device,
+            payload=payload,
+            speed_hz=speed_hz,
+            mode=mode,
+            bits_per_word=bits_per_word,
+        )
+        if transfer.get("code") != 0:
+            return transfer
+        matched = transfer["details"]["rx_hex"] == transfer["details"]["tx_hex"]
+        return {
+            "code": 0 if matched else -1,
+            "message": (
+                f"SPI loopback passed on {transfer['details']['device']}"
+                if matched
+                else f"SPI loopback mismatch on {transfer['details']['device']}"
+            ),
+            "details": {**transfer["details"], "matched": matched},
+            "metrics": {**transfer["metrics"], "matched": matched},
+        }
+
+
 class GenericCameraCapability:
     """CSI camera checks via NVIDIA Argus/GStreamer and media nodes."""
 
@@ -2042,6 +2139,203 @@ def _normalize_i2c_addresses(values: list[Any]) -> list[int]:
         except ValueError:
             continue
     return sorted(dict.fromkeys(addresses))
+
+
+def _spi_devices_from_dev() -> list[dict[str, Any]]:
+    devices = []
+    for path in sorted(Path("/dev").glob("spidev*")):
+        match = re.fullmatch(r"spidev(\d+)\.(\d+)", path.name)
+        if not match:
+            continue
+        sysfs = Path("/sys/class/spidev") / path.name
+        resolved_sysfs = _resolve_path(sysfs)
+        controller = _spi_controller_from_sysfs(resolved_sysfs)
+        devices.append(
+            {
+                "name": path.name,
+                "path": str(path),
+                "bus": int(match.group(1)),
+                "chip_select": int(match.group(2)),
+                "readable": os.access(path, os.R_OK),
+                "writable": os.access(path, os.W_OK),
+                "sysfs": str(resolved_sysfs) if resolved_sysfs else "",
+                "controller": controller,
+                "modalias": _read_text(resolved_sysfs / "device" / "modalias") if resolved_sysfs else "",
+                "driver": _driver_name(resolved_sysfs / "device" / "driver") if resolved_sysfs else "",
+            }
+        )
+    return devices
+
+
+def _matching_spi_devices(device: str, devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = _normalize_spi_device_text(device)
+    matches = []
+    for item in devices:
+        names = {
+            _normalize_spi_device_text(str(item.get("path") or "")),
+            _normalize_spi_device_text(str(item.get("name") or "")),
+            f"{item.get('bus')}.{item.get('chip_select')}",
+        }
+        if normalized in names:
+            matches.append(item)
+    return matches
+
+
+def _spi_payload(
+    *,
+    tx_hex: str,
+    tx_text: str,
+    tx_bytes: list[Any] | None,
+) -> bytes | dict[str, Any]:
+    if tx_bytes is not None:
+        try:
+            values = [int(item) for item in tx_bytes]
+        except (TypeError, ValueError):
+            return _failed(-1, "invalid SPI tx_bytes", {"tx_bytes": tx_bytes})
+        invalid = [item for item in values if item < 0 or item > 255]
+        if invalid:
+            return _failed(-1, "SPI tx_bytes values must be between 0 and 255", {"invalid_values": invalid})
+        return bytes(values)
+
+    if tx_hex:
+        normalized = re.sub(r"[\s,:_-]+", "", tx_hex.strip())
+        normalized = re.sub(r"0x", "", normalized, flags=re.IGNORECASE)
+        if len(normalized) % 2 != 0 or not re.fullmatch(r"[0-9a-fA-F]*", normalized):
+            return _failed(-1, "invalid SPI tx_hex", {"tx_hex": tx_hex})
+        return bytes.fromhex(normalized)
+
+    return str(tx_text).encode("utf-8")
+
+
+def _spi_transfer(
+    *,
+    device: str,
+    payload: bytes,
+    speed_hz: int,
+    mode: int,
+    bits_per_word: int,
+) -> dict[str, Any]:
+    if not payload:
+        return _failed(-1, "SPI payload is empty", {"device": device})
+    spi_module = _spidev_module()
+    if isinstance(spi_module, dict):
+        return spi_module
+    devices = _spi_devices_from_dev()
+    match = _resolve_spi_device(device, devices)
+    if match is None:
+        return _failed(
+            -1,
+            "SPI device not found",
+            {"device": device, "available_devices": [item.get("path") for item in devices]},
+        )
+    path = Path(str(match["path"]))
+    if not path.exists():
+        return _failed(-1, "SPI device node does not exist", {"device": str(path)})
+
+    bus = int(match["bus"])
+    chip_select = int(match["chip_select"])
+    started = time.perf_counter()
+    spi = spi_module.SpiDev()
+    try:
+        spi.open(bus, chip_select)
+        spi.max_speed_hz = int(speed_hz)
+        spi.mode = int(mode)
+        spi.bits_per_word = int(bits_per_word)
+        rx_values = spi.xfer2(list(payload))
+    except PermissionError as exc:
+        return _failed(
+            -1,
+            "SPI device permission denied",
+            {"device": str(path), "error": str(exc), "hint": "run as root or allow access to /dev/spidev*"},
+        )
+    except FileNotFoundError as exc:
+        return _failed(-1, "SPI device disappeared", {"device": str(path), "error": str(exc)})
+    except OSError as exc:
+        return _failed(-1, "SPI transfer failed", {"device": str(path), "error": str(exc)})
+    finally:
+        try:
+            spi.close()
+        except Exception:
+            pass
+
+    rx_bytes = bytes(int(item) & 0xFF for item in rx_values)
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    return {
+        "code": 0,
+        "message": f"SPI transfer completed on {path}",
+        "details": {
+            "device": str(path),
+            "bus": bus,
+            "chip_select": chip_select,
+            "speed_hz": int(speed_hz),
+            "mode": int(mode),
+            "bits_per_word": int(bits_per_word),
+            "tx_hex": payload.hex(),
+            "rx_hex": rx_bytes.hex(),
+            "tx_text": _decode_printable(payload),
+            "rx_text": _decode_printable(rx_bytes),
+            "device_info": match,
+        },
+        "metrics": {"byte_count": len(payload), "duration_ms": duration_ms},
+    }
+
+
+def _spidev_module() -> Any:
+    try:
+        return importlib.import_module("spidev")
+    except ImportError:
+        return _failed(-2, "spidev Python module is not installed", {"package": "python3-spidev"})
+
+
+def _resolve_spi_device(device: str, devices: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if device in ("", "auto"):
+        return devices[0] if devices else None
+    matches = _matching_spi_devices(device, devices)
+    return matches[0] if matches else None
+
+
+def _normalize_spi_device_text(device: str) -> str:
+    text = str(device).strip()
+    if text.startswith("/dev/"):
+        text = Path(text).name
+    if text.startswith("spidev"):
+        text = text.removeprefix("spidev")
+    return text
+
+
+def _resolve_path(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _spi_controller_from_sysfs(path: Path | None) -> str:
+    if path is None:
+        return ""
+    parts = path.parts
+    for index, part in enumerate(parts):
+        if part.startswith("spi_master") and index + 1 < len(parts):
+            return parts[index + 1]
+    return ""
+
+
+def _driver_name(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.resolve().name
+    except OSError:
+        return path.name
+
+
+def _decode_printable(data: bytes) -> str:
+    text = data.decode("utf-8", errors="replace")
+    if any(ord(char) < 32 and char not in "\r\n\t" for char in text):
+        return ""
+    return text
 
 
 def _glob_paths(pattern: str) -> list[str]:
