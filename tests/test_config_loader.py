@@ -32,16 +32,18 @@ class ConfigLoaderTests(unittest.TestCase):
             [fn.name for fn in case.functions],
             [
                 "usb.detect",
+                "storage.detect",
                 "storage.info",
                 "storage.read_speed",
                 "storage.write_speed",
+                "storage.integrity_check",
             ],
         )
         self.assertEqual(case.functions[0].label, "usb_detect")
         self.assertTrue(case.functions[0].save_output)
-        self.assertEqual(case.functions[2].label, "storage_read_speed")
-        self.assertTrue(case.functions[2].skip_on_fail)
-        self.assertEqual(case.functions[2].params["device"], "{{ storage_info.result.details.discovery.disk }}")
+        self.assertEqual(case.functions[3].label, "storage_read_speed")
+        self.assertTrue(case.functions[3].skip_on_fail)
+        self.assertEqual(case.functions[3].params["device"], "{{ storage_info.result.details.discovery.disk }}")
 
 
 if __name__ == "__main__":

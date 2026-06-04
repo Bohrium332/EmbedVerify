@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,79 @@ class GenericStorageCapability:
 
     def __init__(self, runner: CommandRunner = run_command) -> None:
         self.runner = runner
+
+    def detect(
+        self,
+        *,
+        device: str = "",
+        expected_type: str = "",
+        min_size_bytes: int = 0,
+        transport: str = "",
+        timeout: int = 10,
+    ) -> dict[str, Any]:
+        """Detect storage devices with optional filters."""
+
+        if not shutil.which("lsblk"):
+            return _failed(-2, "lsblk not found: install util-linux", {"tool": "lsblk"})
+
+        cmd = [
+            "lsblk",
+            "--bytes",
+            "--json",
+            "-o",
+            "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,SERIAL,VENDOR,ROTA,TRAN,LOG-SEC",
+        ]
+        if device and device != "auto":
+            cmd.append(device)
+        try:
+            result = self.runner(cmd, timeout)
+        except subprocess.TimeoutExpired:
+            return _failed(1, "storage detect timed out", {"device": device, "timeout": timeout})
+
+        if result.returncode != 0:
+            return _failed(
+                -1,
+                result.stderr.strip() or "lsblk failed",
+                {"device": device, "exit_code": result.returncode},
+            )
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return _failed(-1, "failed to parse lsblk output", {"raw": result.stdout[:500]})
+
+        devices = _flatten_blockdevices(data.get("blockdevices", []))
+        filtered = []
+        for item in devices:
+            if expected_type and item.get("type") != expected_type:
+                continue
+            if transport and item.get("tran") != transport:
+                continue
+            try:
+                size = int(item.get("size") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            if min_size_bytes and size < min_size_bytes:
+                continue
+            filtered.append(item)
+
+        success = bool(filtered)
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(filtered)} storage device(s)"
+                if success
+                else "no storage devices matched filters"
+            ),
+            "details": {
+                "device": device,
+                "expected_type": expected_type,
+                "min_size_bytes": min_size_bytes,
+                "transport": transport,
+                "devices": filtered,
+            },
+            "metrics": {"device_count": len(filtered)},
+        }
 
     def info(self, *, device: str = "", mount_point: str = "", timeout: int = 10) -> dict[str, Any]:
         """Return storage information using lsblk and findmnt."""
@@ -202,6 +276,7 @@ class GenericStorageCapability:
     def write_speed(
         self,
         *,
+        device: str = "",
         mount_point: str = "auto",
         file_size_mb: int = 256,
         min_speed_mbps: float = 0,
@@ -211,38 +286,15 @@ class GenericStorageCapability:
 
         if not shutil.which("dd"):
             return _failed(-2, "dd not found: install coreutils", {"tool": "dd"})
-        discovery: dict[str, Any] | None = None
-        auto_mounted = False
-        resolved_mount = "" if mount_point == "auto" else mount_point
-        if not resolved_mount:
-            discovery = self.discover_usb_storage(timeout=10)
-            resolved_mount = str((discovery or {}).get("mount_point") or "")
-        if not resolved_mount:
-            if not discovery:
-                discovery = self.discover_usb_storage(timeout=10)
-            mount_result = self._auto_mount_usb_storage(discovery)
-            if mount_result.get("code") != 0:
-                return mount_result
-            resolved_mount = str(mount_result["details"]["mount_point"])
-            auto_mounted = True
-        if not os.path.ismount(resolved_mount):
-            return _failed(-1, "mount point is not mounted", {"mount_point": resolved_mount})
 
-        mount_source = self._mount_source(resolved_mount)
-        mount_options = self._mount_options(resolved_mount)
-        if "ro" in mount_options.split(","):
-            if auto_mounted:
-                self._umount(resolved_mount)
-            return _failed(
-                -1,
-                "mount point is read-only",
-                {
-                    "mount_point": resolved_mount,
-                    "mount_source": mount_source,
-                    "mount_options": mount_options,
-                    "dmesg_errors": _recent_storage_dmesg_errors(mount_source),
-                },
-            )
+        mount = self._prepare_write_mount(device=device, mount_point=mount_point)
+        if mount["code"] != 0:
+            return mount
+        resolved_mount = str(mount["details"]["mount_point"])
+        auto_mounted = bool(mount["details"]["auto_mounted"])
+        mount_source = str(mount["details"]["mount_source"])
+        mount_options = str(mount["details"]["mount_options"])
+        discovery = mount["details"]["discovery"]
 
         test_file = str(Path(resolved_mount) / ".ev_write_test.bin")
         base_details = {
@@ -304,6 +356,88 @@ class GenericStorageCapability:
             ),
             "details": base_details | {"exit_code": result.returncode},
             "metrics": {"write_speed_mbps": round(speed_mbps, 2)},
+        }
+
+    def integrity_check(
+        self,
+        *,
+        device: str = "",
+        mount_point: str = "auto",
+        file_size_mb: int = 64,
+        timeout: int = 300,
+    ) -> dict[str, Any]:
+        """Write random data, read it back, and compare SHA256 hashes."""
+
+        import hashlib
+
+        mount = self._prepare_write_mount(device=device, mount_point=mount_point)
+        if mount["code"] != 0:
+            return mount
+        resolved_mount = str(mount["details"]["mount_point"])
+        auto_mounted = bool(mount["details"]["auto_mounted"])
+        test_file = str(Path(resolved_mount) / ".ev_integrity_test.bin")
+        write_hash = ""
+        read_hash = ""
+        write_time_s = 0.0
+        read_time_s = 0.0
+
+        try:
+            start = time.monotonic()
+            h = hashlib.sha256()
+            deadline = start + timeout
+            with open(test_file, "wb") as handle:
+                for _ in range(int(file_size_mb)):
+                    if time.monotonic() > deadline:
+                        return _failed(1, "storage integrity write timed out", {"file_size_mb": file_size_mb})
+                    chunk = os.urandom(1 << 20)
+                    h.update(chunk)
+                    handle.write(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+            write_hash = h.hexdigest()
+            write_time_s = time.monotonic() - start
+
+            start = time.monotonic()
+            h = hashlib.sha256()
+            with open(test_file, "rb") as handle:
+                while True:
+                    if time.monotonic() > start + timeout:
+                        return _failed(1, "storage integrity read timed out", {"file_size_mb": file_size_mb})
+                    chunk = handle.read(1 << 20)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+            read_hash = h.hexdigest()
+            read_time_s = time.monotonic() - start
+        finally:
+            try:
+                os.remove(test_file)
+            except OSError:
+                pass
+            if auto_mounted:
+                self._umount(resolved_mount)
+
+        integrity_match = bool(write_hash) and write_hash == read_hash
+        return {
+            "code": 0 if integrity_match else -1,
+            "message": "data integrity verified" if integrity_match else "data integrity check failed",
+            "details": {
+                "mount_point": resolved_mount,
+                "mount_source": mount["details"]["mount_source"],
+                "file_size_mb": file_size_mb,
+                "auto_mounted": auto_mounted,
+                "discovery": mount["details"]["discovery"],
+                "integrity_match": integrity_match,
+                "write_hash": f"{write_hash[:16]}..." if write_hash else "",
+                "read_hash": f"{read_hash[:16]}..." if read_hash else "",
+            },
+            "metrics": {
+                "integrity_match": integrity_match,
+                "write_speed_mbps": round(file_size_mb / max(write_time_s, 0.001), 2),
+                "read_speed_mbps": round(file_size_mb / max(read_time_s, 0.001), 2),
+                "write_time_s": round(write_time_s, 2),
+                "read_time_s": round(read_time_s, 2),
+            },
         }
 
     def discover_usb_storage(self, *, timeout: int = 10) -> dict[str, Any] | None:
@@ -384,6 +518,68 @@ class GenericStorageCapability:
         except Exception:
             pass
 
+    def _prepare_write_mount(self, *, device: str = "", mount_point: str = "auto") -> dict[str, Any]:
+        discovery: dict[str, Any] | None = None
+        auto_mounted = False
+        resolved_device = "" if device == "auto" else device
+        resolved_mount = "" if mount_point == "auto" else mount_point
+        if not resolved_mount and resolved_device:
+            discovery = self._discovery_from_device(resolved_device)
+            resolved_mount = str((discovery or {}).get("mount_point") or "")
+        if not resolved_mount:
+            if not discovery:
+                discovery = self.discover_usb_storage(timeout=10)
+            resolved_mount = str((discovery or {}).get("mount_point") or "")
+        if not resolved_mount:
+            mount_result = self._auto_mount_usb_storage(discovery)
+            if mount_result.get("code") != 0:
+                return mount_result
+            resolved_mount = str(mount_result["details"]["mount_point"])
+            auto_mounted = True
+        if not os.path.ismount(resolved_mount):
+            return _failed(-1, "mount point is not mounted", {"mount_point": resolved_mount})
+
+        mount_source = self._mount_source(resolved_mount)
+        mount_options = self._mount_options(resolved_mount)
+        if "ro" in mount_options.split(","):
+            if auto_mounted:
+                self._umount(resolved_mount)
+            return _failed(
+                -1,
+                "mount point is read-only",
+                {
+                    "mount_point": resolved_mount,
+                    "mount_source": mount_source,
+                    "mount_options": mount_options,
+                    "dmesg_errors": _recent_storage_dmesg_errors(mount_source),
+                },
+            )
+        return {
+            "code": 0,
+            "message": "mount point is ready for write test",
+            "details": {
+                "mount_point": resolved_mount,
+                "mount_source": mount_source,
+                "mount_options": mount_options,
+                "auto_mounted": auto_mounted,
+                "discovery": discovery,
+            },
+            "metrics": {},
+        }
+
+    def _discovery_from_device(self, device: str) -> dict[str, Any] | None:
+        path = str(Path(device))
+        if not Path(path).exists():
+            return None
+        mount_point = self._mount_target(path)
+        return {
+            "disk": path,
+            "partition": path,
+            "mount_point": mount_point,
+            "fstype": self._fstype(path),
+            "whole_disk_filesystem": True,
+        }
+
     def _mount_source(self, mount_point: str) -> str:
         try:
             result = self.runner(["findmnt", "-n", "-o", "SOURCE", mount_point], 5)
@@ -401,6 +597,24 @@ class GenericStorageCapability:
         if result.returncode != 0:
             return ""
         return result.stdout.strip()
+
+    def _mount_target(self, device: str) -> str:
+        try:
+            result = self.runner(["findmnt", "-n", "-o", "TARGET", device], 5)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+
+    def _fstype(self, device: str) -> str:
+        try:
+            result = self.runner(["lsblk", "-n", "-o", "FSTYPE", device], 5)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return ""
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
 
     def _ext_filesystem_health(self, partition: str, fstype: str) -> dict[str, Any]:
         if fstype not in ("ext2", "ext3", "ext4"):
@@ -425,6 +639,18 @@ class GenericStorageCapability:
 
 def _failed(code: int, message: str, details: dict[str, Any]) -> dict[str, Any]:
     return {"code": code, "message": message, "details": details, "metrics": {}}
+
+
+def _flatten_blockdevices(devices: Any) -> list[dict[str, Any]]:
+    if not isinstance(devices, list):
+        return []
+    flattened: list[dict[str, Any]] = []
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        flattened.append(device)
+        flattened.extend(_flatten_blockdevices(device.get("children", [])))
+    return flattened
 
 
 def _select_usb_storage(devices: list[dict[str, Any]]) -> dict[str, Any] | None:

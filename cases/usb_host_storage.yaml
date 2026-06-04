@@ -17,6 +17,25 @@ functions:
           value: 0
           message: USB device must be detected
 
+  - name: storage.detect
+    label: storage_detect
+    skip_on_fail: true
+    save_output: true
+    params:
+      expected_type: disk
+      transport: usb
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: USB storage disk must be detected
+        - field: metrics.device_count
+          operator: gt
+          value: 0
+          message: USB storage disk count must be positive
+
   - name: storage.info
     label: storage_info
     skip_on_fail: true
@@ -72,3 +91,22 @@ functions:
           operator: gt
           value: 0
           message: USB storage write speed must be positive
+
+  - name: storage.integrity_check
+    label: storage_integrity
+    skip_on_fail: true
+    save_output: true
+    params:
+      mount_point: auto
+      file_size_mb: 64
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: USB storage integrity check must succeed
+        - field: metrics.integrity_match
+          operator: eq
+          value: true
+          message: USB storage written data must match read data
