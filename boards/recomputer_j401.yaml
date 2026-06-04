@@ -4,6 +4,12 @@ adapter: jetson
 capabilities:
   usb: linux_generic
   storage: linux_generic
+  network: linux_generic
+  pcie_nvme: linux_generic
+  rtc: linux_generic
+  fan: linux_generic
+  gpio: linux_generic
+  i2c: linux_generic
   system_info: jetson
 interfaces:
   usb:
@@ -13,14 +19,35 @@ interfaces:
   storage:
     items:
       - /dev/sda
+  network:
+    items:
+      - gigabit_ethernet
+  pcie_nvme:
+    items:
+      - m2_key_m
+  rtc:
+    items:
+      - /dev/rtc0
+  fan:
+    items:
+      - pwm_fan
+  gpio:
+    items:
+      - 40pin_header
+  i2c:
+    items:
+      - 40pin_header_i2c
 tools_required:
   - lsusb
   - lsblk
   - findmnt
   - dd
   - hdparm
+  - ip
+  - ping
+  - hwclock
+  - i2cdetect
 metadata:
   vendor: Seeed
   family: Jetson
   first_supported_suite: usb_smoke
-

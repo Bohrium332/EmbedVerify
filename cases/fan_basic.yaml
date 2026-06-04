@@ -1,0 +1,22 @@
+name: fan_basic
+description: Fan hwmon telemetry smoke test.
+module: fan
+execution: sequential
+functions:
+  - name: fan.info
+    label: fan_info
+    save_output: true
+    params:
+      expected_count: 1
+      min_rpm: 0
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Fan telemetry must be available
+        - field: metrics.fan_count
+          operator: gt
+          value: 0
+          message: At least one fan hwmon entry must exist

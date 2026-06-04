@@ -41,7 +41,7 @@ echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/u
 Latest validated commit:
 
 ```text
-b6cc509 Split USB and storage functions into entrypoint modules
+b7e708d Document USB review chain completion
 ```
 
 Latest result summary:
@@ -65,8 +65,39 @@ direct suite/case/function execution: verified
 ## Notes
 
 - USB storage auto-discovery found `/dev/sda`.
-- Auto-mount used `/mnt/embedverify-sda1`.
+- Current clean SSD uses whole-disk ext4 on `/dev/sda`.
 - The mount was automatically removed after write speed testing.
+
+## Peripheral Expansion In Progress
+
+First-batch J401 carrier-board interfaces have been implemented locally:
+
+```text
+suite: suites/peripheral_smoke.yaml
+cases: network_basic, nvme_storage, rtc_basic, fan_basic, gpio_basic, i2c_basic
+functions:
+  network.list_interfaces / network.link_status / network.ping
+  pcie_nvme.detect
+  rtc.list_devices / rtc.read
+  fan.info
+  gpio.list_chips / gpio.line_info
+  i2c.list_buses / i2c.scan
+```
+
+Implementation remains in the current framework shape:
+
+```text
+Function output: code/message/details/metrics only
+Board selection: CLI --board > config.yaml > error
+Capability selection: Function calls capability registry, no Fixture board branching
+```
+
+Local verification passed:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m embedverify.cli.main run suites/peripheral_smoke.yaml --dry-run
+```
 
 ## Current SSD Caution
 

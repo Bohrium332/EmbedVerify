@@ -1,0 +1,40 @@
+name: i2c_basic
+description: I2C bus discovery and read-only scan smoke test.
+module: i2c
+execution: sequential
+functions:
+  - name: i2c.list_buses
+    label: i2c_buses
+    save_output: true
+    params:
+      expected_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: I2C bus list must succeed
+        - field: metrics.bus_count
+          operator: gt
+          value: 0
+          message: At least one I2C bus must exist
+
+  - name: i2c.scan
+    label: i2c_scan
+    skip_on_fail: true
+    save_output: true
+    params:
+      bus: auto
+      min_device_count: 0
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: I2C scan must complete
+        - field: metrics.device_count
+          operator: gte
+          value: 0
+          message: I2C device count metric must be present

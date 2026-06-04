@@ -31,6 +31,13 @@
   product scope.
 - Added direct suite/case/function execution entries.
 - Added `storage.detect` and `storage.integrity_check`.
+- Added first-batch peripheral coverage for J401 carrier-board interfaces:
+  `network`, `pcie_nvme`, `rtc`, `fan`, `gpio`, and `i2c`.
+- Added `suites/peripheral_smoke.yaml` plus six read-only/low-risk cases:
+  `network_basic`, `nvme_storage`, `rtc_basic`, `fan_basic`, `gpio_basic`,
+  and `i2c_basic`.
+- Added unit coverage for new peripheral Function entrypoints and generic Linux
+  parsers.
 
 ## Latest Passing Metrics
 
@@ -115,12 +122,11 @@ report text format: code=<value>, no Function status field
 
 ## Next Round
 
-- Use the completed USB chain as the review baseline.
-- Start framework-wide hardening based on original EmbedVerify patterns:
-  direct function/case/suite execution, richer capability contracts, and
-  reusable storage/system_info modules.
+- Apply the first-batch peripheral commit to the Jetson and run:
+  `network`, `pcie_nvme`, `rtc`, `fan`, `gpio`, and `i2c` Function/Case checks.
+- Keep USB as the regression baseline while expanding peripheral coverage.
 
 ## Round After Next
 
-- Expand the next non-USB minimal link or board profile after the framework
-  review is accepted.
+- Decide which second-batch interfaces have hardware attached: CAN/CAN FD,
+  UART loopback, CSI camera, M.2 Key E Wi-Fi/BT, HDMI display, SPI/PWM/I2S.

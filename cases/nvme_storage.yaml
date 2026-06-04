@@ -1,0 +1,22 @@
+name: nvme_storage
+description: Optional PCIe NVMe device discovery smoke test.
+module: pcie_nvme
+execution: sequential
+functions:
+  - name: pcie_nvme.detect
+    label: nvme_detect
+    save_output: true
+    params:
+      expected_count: 0
+      required: false
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Optional NVMe discovery must complete
+        - field: metrics.device_count
+          operator: gte
+          value: 0
+          message: NVMe device count metric must be present

@@ -1,0 +1,39 @@
+name: rtc_basic
+description: RTC device discovery and read smoke test.
+module: rtc
+execution: sequential
+functions:
+  - name: rtc.list_devices
+    label: rtc_devices
+    save_output: true
+    params:
+      expected_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: RTC device list must succeed
+        - field: metrics.device_count
+          operator: gt
+          value: 0
+          message: At least one RTC device must exist
+
+  - name: rtc.read
+    label: rtc_read
+    skip_on_fail: true
+    save_output: true
+    params:
+      device: auto
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: RTC read must succeed
+        - field: metrics.readable
+          operator: eq
+          value: true
+          message: RTC must be readable

@@ -1,0 +1,11 @@
+name: peripheral_smoke
+description: Read-only peripheral and protocol smoke suite.
+execution: sequential
+report_enabled: true
+cases:
+  - cases/network_basic.yaml
+  - cases/nvme_storage.yaml
+  - cases/rtc_basic.yaml
+  - cases/fan_basic.yaml
+  - cases/gpio_basic.yaml
+  - cases/i2c_basic.yaml

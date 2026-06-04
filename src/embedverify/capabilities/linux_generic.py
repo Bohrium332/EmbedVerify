@@ -637,6 +637,471 @@ class GenericStorageCapability:
         return health
 
 
+class GenericNetworkCapability:
+    """Network interface checks via common Linux tools and sysfs."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def list_interfaces(
+        self,
+        *,
+        include_loopback: bool = False,
+        expected_count: int = 1,
+        timeout: int = 10,
+    ) -> dict[str, Any]:
+        interfaces = self._interfaces(timeout)
+        if not include_loopback:
+            interfaces = [item for item in interfaces if item.get("name") != "lo"]
+        success = len(interfaces) >= expected_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(interfaces)} network interface(s)"
+                if success
+                else f"expected at least {expected_count} network interface(s), found {len(interfaces)}"
+            ),
+            "details": {
+                "include_loopback": include_loopback,
+                "expected_count": expected_count,
+                "interfaces": interfaces,
+            },
+            "metrics": {"interface_count": len(interfaces)},
+        }
+
+    def link_status(
+        self,
+        *,
+        interface: str = "auto",
+        require_up: bool = True,
+        require_carrier: bool = False,
+        timeout: int = 10,
+    ) -> dict[str, Any]:
+        interfaces = self._interfaces(timeout)
+        default_interface, gateway = self._default_route(timeout)
+        resolved = default_interface if interface == "auto" else interface
+        if not resolved:
+            resolved = _first_non_loopback(interfaces)
+        match = next((item for item in interfaces if item.get("name") == resolved), None)
+        if not match:
+            return _failed(
+                -1,
+                "network interface not found",
+                {
+                    "interface": interface,
+                    "resolved_interface": resolved,
+                    "available_interfaces": [item.get("name") for item in interfaces],
+                },
+            )
+
+        operstate = str(match.get("operstate") or "")
+        carrier = match.get("carrier")
+        link_up = operstate == "up"
+        carrier_ok = carrier is True or carrier is None
+        success = (not require_up or link_up) and (not require_carrier or carrier_ok)
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"{resolved} link is usable"
+                if success
+                else f"{resolved} link is not usable: operstate={operstate}, carrier={carrier}"
+            ),
+            "details": {
+                "interface": interface,
+                "resolved_interface": resolved,
+                "default_gateway": gateway,
+                "require_up": require_up,
+                "require_carrier": require_carrier,
+                "link": match,
+            },
+            "metrics": {
+                "link_up": link_up,
+                "carrier": carrier,
+                "speed_mbps": match.get("speed_mbps"),
+            },
+        }
+
+    def ping(
+        self,
+        *,
+        host: str = "gateway",
+        count: int = 3,
+        timeout: int = 10,
+        interface: str = "",
+    ) -> dict[str, Any]:
+        if not shutil.which("ping"):
+            return _failed(-2, "ping not found: install iputils-ping", {"tool": "ping"})
+        target = host
+        default_interface, gateway = self._default_route(timeout)
+        if host in ("auto", "gateway"):
+            target = gateway
+        if not target:
+            return _failed(-1, "ping target could not be resolved", {"host": host})
+
+        per_packet_timeout = max(1, int(timeout / max(count, 1)))
+        cmd = ["ping", "-c", str(count), "-W", str(per_packet_timeout)]
+        resolved_interface = interface or default_interface
+        if interface:
+            cmd.extend(["-I", interface])
+        cmd.append(target)
+        try:
+            result = self.runner(cmd, timeout)
+        except subprocess.TimeoutExpired:
+            return _failed(-1, "ping timed out", {"target": target, "timeout": timeout})
+
+        metrics = _parse_ping_metrics(result.stdout)
+        success = result.returncode == 0 and int(metrics.get("packets_received", 0)) > 0
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"ping {target} ok"
+                if success
+                else f"ping {target} failed"
+            ),
+            "details": {
+                "host": host,
+                "target": target,
+                "interface": resolved_interface,
+                "exit_code": result.returncode,
+                "stdout_tail": _tail_text(result.stdout, 1200),
+                "stderr_tail": _tail_text(result.stderr, 1200),
+            },
+            "metrics": metrics,
+        }
+
+    def _interfaces(self, timeout: int) -> list[dict[str, Any]]:
+        if shutil.which("ip"):
+            try:
+                result = self.runner(["ip", "-j", "addr"], timeout)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                result = CommandResult(1, "", "")
+            if result.returncode == 0:
+                try:
+                    data = json.loads(result.stdout)
+                    if isinstance(data, list):
+                        return _parse_ip_addr_json(data)
+                except json.JSONDecodeError:
+                    pass
+        return _interfaces_from_sysfs()
+
+    def _default_route(self, timeout: int) -> tuple[str, str]:
+        if not shutil.which("ip"):
+            return "", ""
+        try:
+            result = self.runner(["ip", "route", "show", "default"], timeout)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return "", ""
+        if result.returncode != 0:
+            return "", ""
+        return _parse_default_route(result.stdout)
+
+
+class GenericPCIeNVMeCapability:
+    """PCIe/NVMe discovery via lsblk and sysfs."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def detect(
+        self,
+        *,
+        expected_count: int = 1,
+        required: bool = True,
+        timeout: int = 10,
+    ) -> dict[str, Any]:
+        devices: list[dict[str, Any]] = []
+        lsblk_error = ""
+        lsblk_available = bool(shutil.which("lsblk"))
+        if lsblk_available:
+            cmd = [
+                "lsblk",
+                "--bytes",
+                "--json",
+                "-o",
+                "NAME,PATH,SIZE,TYPE,MODEL,SERIAL,VENDOR,TRAN",
+            ]
+            try:
+                result = self.runner(cmd, timeout)
+            except subprocess.TimeoutExpired:
+                return _failed(-1, "NVMe detect timed out", {"timeout": timeout})
+            if result.returncode == 0:
+                try:
+                    data = json.loads(result.stdout)
+                    devices = _filter_nvme_block_devices(_flatten_blockdevices(data.get("blockdevices", [])))
+                except json.JSONDecodeError:
+                    lsblk_error = "failed to parse lsblk output"
+            else:
+                lsblk_error = result.stderr.strip() or "lsblk failed"
+
+        controllers = _sysfs_children("/sys/class/nvme")
+        found_count = len(devices) if lsblk_available and not lsblk_error else max(len(devices), len(controllers))
+        success = found_count >= expected_count
+        if not success and not required:
+            success = True
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {found_count} NVMe device(s)"
+                if found_count
+                else ("optional NVMe device not present" if not required else "no NVMe device detected")
+            ),
+            "details": {
+                "expected_count": expected_count,
+                "required": required,
+                "devices": devices,
+                "controllers": controllers,
+                "lsblk_error": lsblk_error,
+            },
+            "metrics": {"device_count": found_count},
+        }
+
+
+class GenericRTCCapability:
+    """RTC read-only checks."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def list_devices(self, *, expected_count: int = 1) -> dict[str, Any]:
+        devices = _rtc_devices()
+        success = len(devices) >= expected_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(devices)} RTC device(s)"
+                if success
+                else f"expected at least {expected_count} RTC device(s), found {len(devices)}"
+            ),
+            "details": {"expected_count": expected_count, "devices": devices},
+            "metrics": {"device_count": len(devices)},
+        }
+
+    def read(self, *, device: str = "auto", timeout: int = 10) -> dict[str, Any]:
+        devices = _rtc_devices()
+        resolved = devices[0]["path"] if device == "auto" and devices else device
+        if not resolved:
+            return _failed(-1, "RTC device not found", {"device": device})
+
+        source = ""
+        raw = ""
+        if shutil.which("hwclock"):
+            try:
+                result = self.runner(["hwclock", "--show", "--rtc", resolved], timeout)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                result = CommandResult(1, "", "")
+            if result.returncode == 0 and result.stdout.strip():
+                source = "hwclock"
+                raw = result.stdout.strip()
+
+        if not raw:
+            name = Path(resolved).name
+            date_text = _read_text(Path("/sys/class/rtc") / name / "date")
+            time_text = _read_text(Path("/sys/class/rtc") / name / "time")
+            if date_text and time_text:
+                source = "sysfs"
+                raw = f"{date_text} {time_text}"
+
+        success = bool(raw)
+        return {
+            "code": 0 if success else -1,
+            "message": f"RTC read ok from {resolved}" if success else f"RTC read failed from {resolved}",
+            "details": {"device": resolved, "source": source, "raw": raw},
+            "metrics": {"readable": success},
+        }
+
+
+class GenericFanCapability:
+    """Read fan telemetry from Linux hwmon/sysfs."""
+
+    def info(
+        self,
+        *,
+        expected_count: int = 1,
+        min_rpm: int = 0,
+    ) -> dict[str, Any]:
+        fans = _fan_hwmon_entries()
+        rpm_values = [
+            int(value)
+            for fan in fans
+            for value in fan.get("rpm_values", [])
+            if isinstance(value, int)
+        ]
+        max_rpm = max(rpm_values) if rpm_values else 0
+        success = len(fans) >= expected_count and max_rpm >= min_rpm
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(fans)} fan hwmon entrie(s)"
+                if success
+                else f"fan requirement not met: count={len(fans)}, max_rpm={max_rpm}"
+            ),
+            "details": {
+                "expected_count": expected_count,
+                "min_rpm": min_rpm,
+                "fans": fans,
+            },
+            "metrics": {
+                "fan_count": len(fans),
+                "max_rpm": max_rpm,
+            },
+        }
+
+
+class GenericGPIOCapability:
+    """GPIO chip discovery via libgpiod tools and /dev."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def list_chips(self, *, expected_count: int = 1, timeout: int = 10) -> dict[str, Any]:
+        chips = _gpio_chips_from_dev()
+        if shutil.which("gpiodetect"):
+            try:
+                result = self.runner(["gpiodetect"], timeout)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                result = CommandResult(1, "", "")
+            if result.returncode == 0:
+                chips = _merge_gpio_chip_info(chips, result.stdout)
+
+        success = len(chips) >= expected_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(chips)} GPIO chip(s)"
+                if success
+                else f"expected at least {expected_count} GPIO chip(s), found {len(chips)}"
+            ),
+            "details": {"expected_count": expected_count, "chips": chips},
+            "metrics": {"chip_count": len(chips)},
+        }
+
+    def line_info(self, *, chip: str = "auto", line: int | None = None, timeout: int = 10) -> dict[str, Any]:
+        chips = _gpio_chips_from_dev()
+        resolved = chips[0]["path"] if chip == "auto" and chips else chip
+        if not resolved:
+            return _failed(-1, "GPIO chip not found", {"chip": chip})
+        if not shutil.which("gpioinfo"):
+            if line is None:
+                return {
+                    "code": 0,
+                    "message": f"GPIO chip {resolved} exists; gpioinfo is not installed",
+                    "details": {"chip": resolved, "line": line, "tool": "gpioinfo", "tool_available": False},
+                    "metrics": {"line_count": 0},
+                }
+            return _failed(-2, "gpioinfo not found: install gpiod", {"tool": "gpioinfo", "chip": resolved})
+
+        cmd = ["gpioinfo", resolved]
+        try:
+            result = self.runner(cmd, timeout)
+        except subprocess.TimeoutExpired:
+            return _failed(-1, "gpioinfo timed out", {"chip": resolved, "timeout": timeout})
+        if result.returncode != 0:
+            return _failed(
+                -1,
+                result.stderr.strip() or "gpioinfo failed",
+                {"chip": resolved, "exit_code": result.returncode},
+            )
+        raw_lines = [item.strip() for item in result.stdout.splitlines() if item.strip()]
+        matching_lines = raw_lines
+        if line is not None:
+            pattern = re.compile(rf"line\s+{int(line)}\b")
+            matching_lines = [item for item in raw_lines if pattern.search(item)]
+        success = bool(matching_lines)
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"GPIO line info available for {resolved}"
+                if success
+                else f"GPIO line {line} not found on {resolved}"
+            ),
+            "details": {
+                "chip": resolved,
+                "line": line,
+                "lines": matching_lines[:200],
+            },
+            "metrics": {"line_count": len(raw_lines), "matched_line_count": len(matching_lines)},
+        }
+
+
+class GenericI2CCapability:
+    """I2C bus discovery and optional bus scan."""
+
+    def __init__(self, runner: CommandRunner = run_command) -> None:
+        self.runner = runner
+
+    def list_buses(self, *, expected_count: int = 1, timeout: int = 10) -> dict[str, Any]:
+        buses = self._buses(timeout)
+        success = len(buses) >= expected_count
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"found {len(buses)} I2C bus(es)"
+                if success
+                else f"expected at least {expected_count} I2C bus(es), found {len(buses)}"
+            ),
+            "details": {"expected_count": expected_count, "buses": buses},
+            "metrics": {"bus_count": len(buses)},
+        }
+
+    def scan(
+        self,
+        *,
+        bus: str = "auto",
+        expected_addresses: list[Any] | None = None,
+        min_device_count: int = 0,
+        timeout: int = 10,
+    ) -> dict[str, Any]:
+        if not shutil.which("i2cdetect"):
+            return _failed(-2, "i2cdetect not found: install i2c-tools", {"tool": "i2cdetect"})
+        buses = self._buses(timeout)
+        resolved = _normalize_i2c_bus(bus)
+        if resolved is None and buses:
+            resolved = int(buses[0]["bus"])
+        if resolved is None:
+            return _failed(-1, "I2C bus not found", {"bus": bus, "available_buses": buses})
+
+        try:
+            result = self.runner(["i2cdetect", "-y", "-r", str(resolved)], timeout)
+        except subprocess.TimeoutExpired:
+            return _failed(-1, "i2cdetect timed out", {"bus": resolved, "timeout": timeout})
+        if result.returncode != 0:
+            return _failed(
+                -1,
+                result.stderr.strip() or "i2cdetect failed",
+                {"bus": resolved, "exit_code": result.returncode},
+            )
+
+        addresses = _parse_i2cdetect_table(result.stdout)
+        expected = _normalize_i2c_addresses(expected_addresses or [])
+        missing = [address for address in expected if address not in addresses]
+        success = len(addresses) >= min_device_count and not missing
+        return {
+            "code": 0 if success else -1,
+            "message": (
+                f"I2C bus {resolved} scan found {len(addresses)} device(s)"
+                if success
+                else f"I2C bus {resolved} scan did not meet expectations"
+            ),
+            "details": {
+                "bus": resolved,
+                "expected_addresses": [f"0x{item:02x}" for item in expected],
+                "missing_addresses": [f"0x{item:02x}" for item in missing],
+                "addresses": [f"0x{item:02x}" for item in addresses],
+            },
+            "metrics": {"device_count": len(addresses)},
+        }
+
+    def _buses(self, timeout: int) -> list[dict[str, Any]]:
+        if shutil.which("i2cdetect"):
+            try:
+                result = self.runner(["i2cdetect", "-l"], timeout)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                result = CommandResult(1, "", "")
+            if result.returncode == 0:
+                return _parse_i2cdetect_list(result.stdout)
+        return _i2c_buses_from_dev()
+
+
 def _failed(code: int, message: str, details: dict[str, Any]) -> dict[str, Any]:
     return {"code": code, "message": message, "details": details, "metrics": {}}
 
@@ -872,6 +1337,314 @@ def _device_names(device: str) -> list[str]:
     if disk_match:
         names.append(disk_match.group(1))
     return list(dict.fromkeys(names))
+
+
+def _parse_ip_addr_json(data: list[Any]) -> list[dict[str, Any]]:
+    interfaces: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("ifname") or "")
+        if not name:
+            continue
+        interfaces.append(
+            {
+                "name": name,
+                "operstate": str(item.get("operstate") or ""),
+                "mac_address": str(item.get("address") or ""),
+                "mtu": item.get("mtu"),
+                "flags": item.get("flags") if isinstance(item.get("flags"), list) else [],
+                "carrier": _read_bool(Path("/sys/class/net") / name / "carrier"),
+                "speed_mbps": _read_int(Path("/sys/class/net") / name / "speed"),
+                "addresses": _ip_addresses(item.get("addr_info")),
+            }
+        )
+    return interfaces
+
+
+def _ip_addresses(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    addresses: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        local = item.get("local")
+        if local:
+            addresses.append(
+                {
+                    "family": item.get("family"),
+                    "local": local,
+                    "prefixlen": item.get("prefixlen"),
+                }
+            )
+    return addresses
+
+
+def _interfaces_from_sysfs() -> list[dict[str, Any]]:
+    base = Path("/sys/class/net")
+    interfaces = []
+    for path in sorted(base.glob("*")):
+        name = path.name
+        interfaces.append(
+            {
+                "name": name,
+                "operstate": _read_text(path / "operstate"),
+                "mac_address": _read_text(path / "address"),
+                "mtu": _read_int(path / "mtu"),
+                "flags": [],
+                "carrier": _read_bool(path / "carrier"),
+                "speed_mbps": _read_int(path / "speed"),
+                "addresses": [],
+            }
+        )
+    return interfaces
+
+
+def _first_non_loopback(interfaces: list[dict[str, Any]]) -> str:
+    for item in interfaces:
+        name = str(item.get("name") or "")
+        if name and name != "lo":
+            return name
+    return ""
+
+
+def _parse_default_route(output: str) -> tuple[str, str]:
+    for line in output.splitlines():
+        parts = line.split()
+        if not parts or parts[0] != "default":
+            continue
+        interface = ""
+        gateway = ""
+        if "dev" in parts:
+            index = parts.index("dev")
+            if index + 1 < len(parts):
+                interface = parts[index + 1]
+        if "via" in parts:
+            index = parts.index("via")
+            if index + 1 < len(parts):
+                gateway = parts[index + 1]
+        return interface, gateway
+    return "", ""
+
+
+def _parse_ping_metrics(output: str) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "packets_transmitted": 0,
+        "packets_received": 0,
+        "packet_loss_percent": 100.0,
+    }
+    packet_match = re.search(
+        r"(\d+)\s+packets transmitted,\s+(\d+)\s+(?:packets )?received,.*?([\d.]+)%\s+packet loss",
+        output,
+    )
+    if packet_match:
+        metrics["packets_transmitted"] = int(packet_match.group(1))
+        metrics["packets_received"] = int(packet_match.group(2))
+        metrics["packet_loss_percent"] = float(packet_match.group(3))
+    rtt_match = re.search(r"(?:rtt|round-trip).*?=\s*([\d.]+)/([\d.]+)/([\d.]+)/", output)
+    if rtt_match:
+        metrics["rtt_min_ms"] = float(rtt_match.group(1))
+        metrics["rtt_avg_ms"] = float(rtt_match.group(2))
+        metrics["rtt_max_ms"] = float(rtt_match.group(3))
+    return metrics
+
+
+def _filter_nvme_block_devices(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered = []
+    for item in devices:
+        name = str(item.get("name") or "")
+        tran = str(item.get("tran") or "")
+        if item.get("type") == "disk" and (tran == "nvme" or name.startswith("nvme")):
+            filtered.append(item)
+    return filtered
+
+
+def _sysfs_children(path: str) -> list[str]:
+    base = Path(path)
+    if not base.exists():
+        return []
+    return sorted(item.name for item in base.iterdir())
+
+
+def _rtc_devices() -> list[dict[str, Any]]:
+    devices = []
+    for path in sorted(Path("/dev").glob("rtc*")):
+        name = path.name
+        sysfs = Path("/sys/class/rtc") / name
+        devices.append(
+            {
+                "path": str(path),
+                "name": name,
+                "sysfs": str(sysfs) if sysfs.exists() else "",
+                "rtc_name": _read_text(sysfs / "name"),
+                "hctosys": _read_text(sysfs / "hctosys"),
+            }
+        )
+    return devices
+
+
+def _fan_hwmon_entries() -> list[dict[str, Any]]:
+    fans = []
+    for hwmon in sorted(Path("/sys/class/hwmon").glob("hwmon*")):
+        name = _read_text(hwmon / "name")
+        rpm_values = _read_numbered_values(hwmon, "fan*_input")
+        rpm_direct = _read_int(hwmon / "rpm")
+        if rpm_direct is not None:
+            rpm_values.append(rpm_direct)
+        pwm_values = _read_numbered_values(hwmon, "pwm[0-9]*")
+        if not rpm_values and not pwm_values and "fan" not in name.lower():
+            continue
+        fans.append(
+            {
+                "hwmon": str(hwmon),
+                "name": name,
+                "rpm_values": rpm_values,
+                "pwm_values": pwm_values,
+            }
+        )
+    return fans
+
+
+def _read_numbered_values(base: Path, pattern: str) -> list[int]:
+    values = []
+    for path in sorted(base.glob(pattern)):
+        if path.name.endswith("_enable"):
+            continue
+        value = _read_int(path)
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _gpio_chips_from_dev() -> list[dict[str, Any]]:
+    chips = []
+    for path in sorted(Path("/dev").glob("gpiochip*")):
+        chips.append({"name": path.name, "path": str(path), "label": "", "line_count": None})
+    return chips
+
+
+def _merge_gpio_chip_info(chips: list[dict[str, Any]], output: str) -> list[dict[str, Any]]:
+    by_name = {str(item.get("name")): dict(item) for item in chips}
+    pattern = re.compile(r"^(gpiochip\d+)\s+\[([^\]]*)\]\s+\((\d+)\s+lines?\)")
+    for line in output.splitlines():
+        match = pattern.search(line.strip())
+        if not match:
+            continue
+        name = match.group(1)
+        item = by_name.get(name, {"name": name, "path": f"/dev/{name}"})
+        item["label"] = match.group(2)
+        item["line_count"] = int(match.group(3))
+        by_name[name] = item
+    return [by_name[name] for name in sorted(by_name)]
+
+
+def _parse_i2cdetect_list(output: str) -> list[dict[str, Any]]:
+    buses = []
+    for line in output.splitlines():
+        line = line.strip()
+        match = re.match(r"i2c-(\d+)\s+(\S+)\s+(.+?)\s{2,}(.+)$", line)
+        if match:
+            buses.append(
+                {
+                    "bus": int(match.group(1)),
+                    "type": match.group(2),
+                    "name": match.group(3).strip(),
+                    "adapter": match.group(4).strip(),
+                    "path": f"/dev/i2c-{match.group(1)}",
+                }
+            )
+            continue
+        tab_parts = line.split("\t")
+        if len(tab_parts) >= 3:
+            bus_match = re.match(r"i2c-(\d+)", tab_parts[0])
+            if bus_match:
+                buses.append(
+                    {
+                        "bus": int(bus_match.group(1)),
+                        "type": tab_parts[1].strip(),
+                        "name": tab_parts[2].strip(),
+                        "adapter": tab_parts[3].strip() if len(tab_parts) > 3 else "",
+                        "path": f"/dev/i2c-{bus_match.group(1)}",
+                    }
+                )
+    return sorted(buses, key=lambda item: int(item["bus"]))
+
+
+def _i2c_buses_from_dev() -> list[dict[str, Any]]:
+    buses = []
+    for path in sorted(Path("/dev").glob("i2c-*")):
+        bus = _normalize_i2c_bus(path.name)
+        if bus is not None:
+            buses.append({"bus": bus, "type": "", "name": "", "adapter": "", "path": str(path)})
+    return buses
+
+
+def _normalize_i2c_bus(value: str) -> int | None:
+    if value in ("", "auto"):
+        return None
+    match = re.search(r"(\d+)$", str(value))
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _parse_i2cdetect_table(output: str) -> list[int]:
+    addresses = []
+    for line in output.splitlines():
+        line = line.strip()
+        row_match = re.match(r"^([0-7][0-9a-fA-F]):\s+(.*)$", line)
+        if not row_match:
+            continue
+        row_base = int(row_match.group(1), 16)
+        cells = row_match.group(2).split()
+        for offset, cell in enumerate(cells):
+            if cell == "--":
+                continue
+            if cell == "UU" or re.fullmatch(r"[0-7][0-9a-fA-F]", cell):
+                addresses.append(row_base + offset)
+    return sorted(dict.fromkeys(addresses))
+
+
+def _normalize_i2c_addresses(values: list[Any]) -> list[int]:
+    addresses = []
+    for value in values:
+        if isinstance(value, int):
+            addresses.append(value)
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        base = 16 if text.lower().startswith("0x") else 10
+        try:
+            addresses.append(int(text, base))
+        except ValueError:
+            continue
+    return sorted(dict.fromkeys(addresses))
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _read_int(path: Path) -> int | None:
+    text = _read_text(path)
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _read_bool(path: Path) -> bool | None:
+    value = _read_int(path)
+    if value is None:
+        return None
+    return value != 0
 
 
 def _tail_text(text: str, limit: int = 4000) -> str:

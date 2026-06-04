@@ -1,10 +1,10 @@
 # EmbedVerify
 
-Platform-neutral hardware interface verification MVP.
+Platform-neutral hardware interface verification framework.
 
-The first milestone validates a USB Host + USB storage path on reComputer J401,
-while keeping the framework open for RK, other Jetson boards, TI boards, and MCU
-targets.
+The first validated chain is USB Host + USB storage on reComputer J401. Current
+work is extending the same framework shape to more J401 carrier-board
+interfaces without moving board-specific command decisions into Fixture code.
 
 ## Architecture
 
@@ -45,6 +45,12 @@ command can be:
 ev run suites/usb_smoke.yaml
 ```
 
+Additional read-only peripheral smoke coverage is available with:
+
+```bash
+ev run suites/peripheral_smoke.yaml
+```
+
 The runner auto-detects the first USB storage device. If the selected partition
 is not mounted and the command is running as root, the write-speed test mounts it
 temporarily under `/mnt/embedverify-*`, writes `.ev_write_test.bin`, removes the
@@ -65,7 +71,7 @@ Install or verify these tools on the board:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3 python3-venv python3-pip usbutils util-linux coreutils hdparm
+sudo apt-get install -y python3 python3-venv python3-pip usbutils util-linux coreutils hdparm iproute2 iputils-ping i2c-tools gpiod
 ```
 
 Or use the helper script from the repository root:

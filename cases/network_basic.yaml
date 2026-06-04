@@ -1,0 +1,62 @@
+name: network_basic
+description: Network interface, link, and gateway ping smoke test.
+module: network
+execution: sequential
+functions:
+  - name: network.list_interfaces
+    label: network_interfaces
+    save_output: true
+    params:
+      include_loopback: false
+      expected_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Network interface list must succeed
+        - field: metrics.interface_count
+          operator: gt
+          value: 0
+          message: At least one non-loopback network interface must exist
+
+  - name: network.link_status
+    label: network_link
+    skip_on_fail: true
+    save_output: true
+    params:
+      interface: auto
+      require_up: true
+      require_carrier: false
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Default network link must be usable
+        - field: metrics.link_up
+          operator: eq
+          value: true
+          message: Network link must be up
+
+  - name: network.ping
+    label: network_ping
+    skip_on_fail: true
+    save_output: true
+    params:
+      host: gateway
+      count: 2
+      timeout: 8
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: Gateway ping must succeed
+        - field: metrics.packets_received
+          operator: gt
+          value: 0
+          message: Ping must receive at least one packet

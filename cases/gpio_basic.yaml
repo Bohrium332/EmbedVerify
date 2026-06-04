@@ -1,0 +1,35 @@
+name: gpio_basic
+description: GPIO chip discovery and line information smoke test.
+module: gpio
+execution: sequential
+functions:
+  - name: gpio.list_chips
+    label: gpio_chips
+    save_output: true
+    params:
+      expected_count: 1
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: GPIO chip list must succeed
+        - field: metrics.chip_count
+          operator: gt
+          value: 0
+          message: At least one GPIO chip must exist
+
+  - name: gpio.line_info
+    label: gpio_line_info
+    skip_on_fail: true
+    save_output: true
+    params:
+      chip: auto
+    expect:
+      pass_policy: all
+      rules:
+        - field: code
+          operator: eq
+          value: 0
+          message: GPIO line info must be readable or chip existence must be confirmed
