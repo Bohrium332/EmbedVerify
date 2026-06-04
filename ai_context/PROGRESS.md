@@ -27,6 +27,10 @@
   instead of the removed Function `status`.
 - Added `label`, `skip_on_fail`, `save_output`, parameter templates, and
   timestamped report directories.
+- Completed the USB review chain as an architecture sample, not as the final
+  product scope.
+- Added direct suite/case/function execution entries.
+- Added `storage.detect` and `storage.integrity_check`.
 
 ## Latest Passing Metrics
 
@@ -35,9 +39,10 @@ board: recomputer_j401
 USB device: Realtek RTL9210 M.2 NVME Adapter
 USB speed: 10G
 storage layout: whole-disk ext4 on /dev/sda
-read_speed_mbps: 692.0
-write_speed_mbps: 570.0
-latest report dir: /home/zzd/EmbedVerify/reports/20260603T094633Z_4a01cc6d559d_passed
+read_speed_mbps: 720.0
+write_speed_mbps: 445.0
+integrity_match: true
+latest report dir: /home/zzd/EmbedVerify/reports/20260604T023629Z_ce9ef4515ed8_passed
 ```
 
 ## Latest SSD Investigation
@@ -95,22 +100,27 @@ disk. The framework now supports whole-disk filesystems and uses `tune2fs`
 Latest full smoke passed:
 
 ```text
-request_id: 4a01cc6d559d
+request_id: ce9ef4515ed8
 report_status: passed
 usb.detect: code=0, 10G Realtek RTL9210 device detected
+storage.detect: code=0, one USB disk detected
 storage.info: code=0, whole_disk_filesystem=true
-storage.read_speed: code=0, 692.0 MB/s
-storage.write_speed: code=0, 570.0 MB/s
-report dir: /home/zzd/EmbedVerify/reports/20260603T094633Z_4a01cc6d559d_passed
-saved outputs: 4 function output JSON files
+storage.read_speed: code=0, 720.0 MB/s
+storage.write_speed: code=0, 445.0 MB/s
+storage.integrity_check: code=0, integrity_match=true
+report dir: /home/zzd/EmbedVerify/reports/20260604T023629Z_ce9ef4515ed8_passed
+saved outputs: 6 function output JSON files
 report text format: code=<value>, no Function status field
 ```
 
 ## Next Round
 
-- Start preparing the next non-USB minimal link or board profile expansion.
-- Keep USB smoke as the regression baseline for future framework changes.
+- Use the completed USB chain as the review baseline.
+- Start framework-wide hardening based on original EmbedVerify patterns:
+  direct function/case/suite execution, richer capability contracts, and
+  reusable storage/system_info modules.
 
 ## Round After Next
 
-- Add richer report summaries if repeated runs need comparison/trending.
+- Expand the next non-USB minimal link or board profile after the framework
+  review is accepted.
