@@ -1,9 +1,8 @@
 name: connected_peripherals_smoke
-description: Smoke suite for currently attached CSI, wireless, HDMI, and UART peripherals.
+description: Smoke suite for currently attached CSI, wireless, and HDMI peripherals.
 execution: sequential
 report_enabled: true
 cases:
   - cases/wireless_basic.yaml
   - cases/display_hdmi.yaml
   - cases/csi_camera.yaml
-  - cases/uart_loopback.yaml

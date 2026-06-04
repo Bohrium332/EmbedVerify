@@ -72,3 +72,26 @@ capabilities:
   system_info: jetson
 ```
 
+Board selection priority is:
+
+```text
+CLI --board > config.yaml > error
+```
+
+Suites should normally stay board-neutral. Board-specific behavior belongs in
+the capability implementation selected by the board profile.
+
+## Multi-Platform Rules
+
+- Keep Function names and return contracts stable across boards.
+- Add a board by adding `boards/<name>.yaml`; do not fork suites for each board
+  unless the physical workflow is genuinely different.
+- Prefer `linux_generic` for common Linux interfaces such as USB, storage,
+  network, RTC, fan, GPIO, I2C, Wi-Fi, Bluetooth, display, camera, and UART.
+- Use `jetson`, `rk`, or another adapter name only for behavior that is
+  platform-specific.
+- If a test requires destructive or persistent board configuration, such as
+  `jetson-io.py` changing camera overlays, keep it out of normal Functions.
+  Functions should detect and report the required precondition.
+- Optional hardware should be encoded in the Case/Suite selection, not hidden by
+  returning success for missing required devices.

@@ -1221,14 +1221,21 @@ class GenericCameraCapability:
             }
         output = "\n".join(item for item in (result.stdout, result.stderr) if item)
         output_lower = output.lower()
-        has_error = (
-            result.returncode != 0
-            or "no cameras available" in output_lower
-            or "error generated" in output_lower
-            or "erroneous pipeline" in output_lower
+        fatal_error = any(
+            marker in output_lower
+            for marker in (
+                "no cameras available",
+                "failed to create cameraprovider",
+                "connecting to nvargus-daemon failed",
+                "erroneous pipeline",
+            )
         )
+        success_marker = "done success" in output_lower or "producer has connected" in output_lower
+        capture_ok = success_marker and not fatal_error
+        if not success_marker:
+            capture_ok = result.returncode == 0 and not fatal_error
         return {
-            "capture_ok": not has_error,
+            "capture_ok": capture_ok,
             "sensor_id": sensor_id,
             "width": width,
             "height": height,
@@ -1409,17 +1416,32 @@ class GenericDisplayCapability:
     def detect(self, *, require_connected: bool = False, timeout: int = 10) -> dict[str, Any]:
         connectors = _display_connectors()
         connected = [item for item in connectors if item.get("status") == "connected"]
-        xrandr_output = ""
-        xrandr_error = ""
+        xrandr_attempts = []
         if shutil.which("xrandr"):
-            try:
-                result = self.runner(["xrandr", "--query"], timeout)
-                xrandr_output = result.stdout
-                xrandr_error = result.stderr
-                if result.returncode == 0:
-                    connectors.extend(_parse_xrandr_connectors(result.stdout))
-            except subprocess.TimeoutExpired:
-                xrandr_error = "xrandr timed out"
+            for candidate in _xrandr_candidates():
+                try:
+                    result = self.runner(candidate["cmd"], timeout)
+                    attempt = {
+                        "label": candidate["label"],
+                        "cmd": candidate["cmd"],
+                        "exit_code": result.returncode,
+                        "stderr_tail": _tail_text(result.stderr, 1200),
+                        "stdout_tail": _tail_text(result.stdout, 1200),
+                    }
+                    xrandr_attempts.append(attempt)
+                    if result.returncode == 0:
+                        connectors.extend(_parse_xrandr_connectors(result.stdout, source=candidate["label"]))
+                        break
+                except subprocess.TimeoutExpired:
+                    xrandr_attempts.append(
+                        {
+                            "label": candidate["label"],
+                            "cmd": candidate["cmd"],
+                            "exit_code": -1,
+                            "stderr_tail": "xrandr timed out",
+                            "stdout_tail": "",
+                        }
+                    )
         driver_paths = _display_driver_paths()
         hdmi_audio_inputs = _glob_paths("/sys/devices/platform/bus@0/3510000.hda/sound/card*/input*")
         subsystem_present = bool(connectors or driver_paths or hdmi_audio_inputs)
@@ -1437,8 +1459,7 @@ class GenericDisplayCapability:
                 "connectors": connectors,
                 "driver_paths": driver_paths,
                 "hdmi_audio_inputs": hdmi_audio_inputs,
-                "xrandr_error": _tail_text(xrandr_error, 1200),
-                "xrandr_output_tail": _tail_text(xrandr_output, 1200),
+                "xrandr_attempts": xrandr_attempts,
             },
             "metrics": {
                 "subsystem_present": subsystem_present,
@@ -2173,7 +2194,34 @@ def _display_connectors() -> list[dict[str, Any]]:
     return connectors
 
 
-def _parse_xrandr_connectors(output: str) -> list[dict[str, Any]]:
+def _xrandr_candidates() -> list[dict[str, Any]]:
+    candidates = [{"label": "current_env", "cmd": ["xrandr", "--query"]}]
+    for path in (
+        "/run/user/128/gdm/Xauthority",
+        str(Path.home() / ".Xauthority"),
+        f"/home/{os.environ.get('SUDO_USER', '')}/.Xauthority" if os.environ.get("SUDO_USER") else "",
+        f"/home/{os.environ.get('USER', '')}/.Xauthority" if os.environ.get("USER") else "",
+    ):
+        if not path or not Path(path).exists():
+            continue
+        candidates.append(
+            {
+                "label": f"display_0_{Path(path).parent.name}",
+                "cmd": ["env", "DISPLAY=:0", f"XAUTHORITY={path}", "xrandr", "--query"],
+            }
+        )
+    deduped = []
+    seen = set()
+    for item in candidates:
+        key = tuple(item["cmd"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _parse_xrandr_connectors(output: str, *, source: str = "xrandr") -> list[dict[str, Any]]:
     connectors = []
     for line in output.splitlines():
         if " connected" not in line and " disconnected" not in line:
@@ -2181,7 +2229,21 @@ def _parse_xrandr_connectors(output: str) -> list[dict[str, Any]]:
         parts = line.split()
         if len(parts) < 2:
             continue
-        connectors.append({"name": parts[0], "status": parts[1], "source": "xrandr", "raw": line.strip()})
+        current_mode = ""
+        if parts[1] == "connected":
+            for part in parts[2:]:
+                if re.match(r"\d+x\d+\+\d+\+\d+", part):
+                    current_mode = part
+                    break
+        connectors.append(
+            {
+                "name": parts[0],
+                "status": parts[1],
+                "source": source,
+                "current_mode": current_mode,
+                "raw": line.strip(),
+            }
+        )
     return connectors
 
 

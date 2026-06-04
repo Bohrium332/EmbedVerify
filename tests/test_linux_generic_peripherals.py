@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from embedverify.capabilities.base import CommandResult
 from embedverify.capabilities.linux_generic import (
+    GenericCameraCapability,
+    GenericDisplayCapability,
     GenericI2CCapability,
     GenericNetworkCapability,
     GenericPCIeNVMeCapability,
@@ -15,6 +17,7 @@ from embedverify.capabilities.linux_generic import (
     _parse_i2cdetect_table,
     _parse_iw_dev,
     _parse_iw_scan,
+    _parse_xrandr_connectors,
 )
 from embedverify.core.runner import SuiteRunner, _invoke_function
 
@@ -158,6 +161,87 @@ class LinuxGenericPeripheralTests(unittest.TestCase):
         self.assertEqual(networks[0]["ssid"], "test")
         self.assertEqual(controller["address"], "54:EF:33:9D:04:7F")
         self.assertEqual(devices[0]["name"], "Demo")
+
+    def test_camera_argus_capture_accepts_done_success_with_correctable_error(self):
+        runner = MappingRunner(
+            {
+                (
+                    "gst-launch-1.0",
+                    "-q",
+                    "nvarguscamerasrc",
+                    "sensor-id=0",
+                    "num-buffers=1",
+                    "!",
+                    "video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1",
+                    "!",
+                    "fakesink",
+                ): CommandResult(
+                    1,
+                    "",
+                    "CONSUMER: Producer has connected; continuing.\n"
+                    "CONSUMER: Done Success\n"
+                    "GST_ARGUS: Done Success\n"
+                    "ERROR: CANCELLED\n"
+                    "Argus Correctable Error Status\n",
+                )
+            }
+        )
+        cap = GenericCameraCapability(runner)
+
+        result = cap._argus_capture(sensor_id=0, timeout=12)
+
+        self.assertTrue(result["capture_ok"])
+        self.assertEqual(result["exit_code"], 1)
+
+    def test_xrandr_parser_extracts_connected_connector(self):
+        connectors = _parse_xrandr_connectors(
+            "\n".join(
+                [
+                    "Screen 0: minimum 8 x 8, current 1024 x 600, maximum 32767 x 32767",
+                    "DP-0 disconnected (normal left inverted right x axis y axis)",
+                    "DP-1 connected primary 1024x600+0+0 (normal left inverted right x axis y axis)",
+                ]
+            ),
+            source="display_0_gdm",
+        )
+
+        connected = [item for item in connectors if item["status"] == "connected"]
+        self.assertEqual(connected[0]["name"], "DP-1")
+        self.assertEqual(connected[0]["current_mode"], "1024x600+0+0")
+
+    def test_display_detect_uses_xrandr_fallback_connection(self):
+        runner = MappingRunner(
+            {
+                ("xrandr", "--query"): CommandResult(1, "", "Can't open display"),
+                ("env", "DISPLAY=:0", "XAUTHORITY=/run/user/128/gdm/Xauthority", "xrandr", "--query"): CommandResult(
+                    0,
+                    "DP-1 connected primary 1024x600+0+0 (normal left inverted right x axis y axis)\n",
+                    "",
+                ),
+            }
+        )
+        cap = GenericDisplayCapability(runner)
+
+        with (
+            patch("embedverify.capabilities.linux_generic.shutil.which", return_value="/usr/bin/tool"),
+            patch("embedverify.capabilities.linux_generic._display_connectors", return_value=[]),
+            patch("embedverify.capabilities.linux_generic._display_driver_paths", return_value=[]),
+            patch("embedverify.capabilities.linux_generic._glob_paths", return_value=[]),
+            patch(
+                "embedverify.capabilities.linux_generic._xrandr_candidates",
+                return_value=[
+                    {"label": "current_env", "cmd": ["xrandr", "--query"]},
+                    {
+                        "label": "display_0_gdm",
+                        "cmd": ["env", "DISPLAY=:0", "XAUTHORITY=/run/user/128/gdm/Xauthority", "xrandr", "--query"],
+                    },
+                ],
+            ),
+        ):
+            result = cap.detect(require_connected=True)
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["metrics"]["connected_count"], 1)
 
     def test_peripheral_suite_dry_run_loads(self):
         report = SuiteRunner(ROOT).run("suites/peripheral_smoke.yaml", dry_run=True)

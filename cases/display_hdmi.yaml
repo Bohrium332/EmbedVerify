@@ -7,7 +7,7 @@ functions:
     label: display_detect
     save_output: true
     params:
-      require_connected: false
+      require_connected: true
     expect:
       pass_policy: all
       rules:
@@ -19,3 +19,7 @@ functions:
           operator: eq
           value: true
           message: Display subsystem must be present
+        - field: metrics.connected_count
+          operator: gt
+          value: 0
+          message: At least one display connector must be connected

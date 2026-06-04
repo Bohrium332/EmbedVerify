@@ -8,7 +8,7 @@ functions:
     save_output: true
     params:
       sensor_id: 0
-      probe_capture: true
+      probe_capture: false
       timeout: 12
     expect:
       pass_policy: all
@@ -17,10 +17,14 @@ functions:
           operator: eq
           value: 0
           message: CSI camera must be available through Argus
-        - field: metrics.capture_ok
+        - field: metrics.plugin_available
           operator: eq
           value: true
-          message: CSI camera probe capture must succeed
+          message: NvArgus camera plugin must be available
+        - field: metrics.video_device_count
+          operator: gt
+          value: 0
+          message: CSI video device node must exist
 
   - name: camera.capture_smoke
     label: camera_capture
