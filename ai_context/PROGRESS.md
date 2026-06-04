@@ -38,6 +38,10 @@
   and `i2c_basic`.
 - Added unit coverage for new peripheral Function entrypoints and generic Linux
   parsers.
+- Added connected peripheral coverage for hardware currently attached to J401:
+  `wifi`, `bluetooth`, `display`, `camera`, and `uart`.
+- Added `suites/connected_peripherals_smoke.yaml` plus cases:
+  `wireless_basic`, `display_hdmi`, `csi_camera`, and `uart_loopback`.
 
 ## Latest Passing Metrics
 
@@ -160,12 +164,64 @@ integrity_match: true
 auto mount cleanup: /mnt/embedverify-sda not mounted after run
 ```
 
+## Latest Connected Peripheral Smoke
+
+```text
+date: 2026-06-04
+board: recomputer_j401
+suite: connected_peripherals_smoke
+request_id: 31439b6282bf
+report_status: failed
+report dir: /tmp/embedverify-connected-reports/20260604T044600Z_31439b6282bf_failed
+```
+
+Passed:
+
+```text
+wifi.detect: wlan0 detected
+wifi.scan: 54 networks found
+bluetooth.detect: hci0 controller powered
+bluetooth.scan: 62 devices found
+display.detect: display/HDMI subsystem present, HDMI audio inputs detected
+```
+
+Failed / blocked by hardware configuration:
+
+```text
+csi_camera:
+  camera.detect code=-1
+  message: CSI camera provider unavailable; check nvargus-daemon and camera device-tree overlay
+  plugin_available=true, media_device_count=1, video_device_count=0, capture_ok=false
+  next action: manually use jetson-io.py to select the correct CSI camera overlay, reboot, then rerun.
+
+uart_loopback:
+  uart.list_ports found 6 serial nodes
+  uart.loopback code=-1
+  candidates tested: /dev/ttyTHS1, /dev/ttyTHS2
+  both ports received no loopback payload
+  next action: confirm which J401 header UART is shorted and whether pinmux maps it to ttyTHS1 or ttyTHS2.
+```
+
+Regression after connected peripheral changes:
+
+```text
+usb_smoke: passed, request_id=5f2b1735a238
+report dir: /tmp/embedverify-regression-reports/20260604T044728Z_5f2b1735a238_passed
+
+peripheral_smoke: passed, request_id=9380cade707a
+report dir: /tmp/embedverify-regression-reports/20260604T044728Z_9380cade707a_passed
+```
+
 ## Next Round
 
 - Push the verified peripheral commits after final local status checks.
-- Keep USB as the regression baseline while expanding peripheral coverage.
+- Push the connected peripheral implementation after final local status checks.
+- Keep USB and `peripheral_smoke` as regression baselines while expanding coverage.
 
 ## Round After Next
 
 - Decide which second-batch interfaces have hardware attached: CAN/CAN FD,
   UART loopback, CSI camera, M.2 Key E Wi-Fi/BT, HDMI display, SPI/PWM/I2S.
+- After the user runs jetson-io.py and reboots, rerun `cases/csi_camera.yaml`.
+- After the user confirms the exact shorted UART header pins, rerun
+  `cases/uart_loopback.yaml` with `port` override if needed.

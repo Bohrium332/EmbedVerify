@@ -41,7 +41,7 @@ echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/u
 Latest validated commit:
 
 ```text
-8786ab8 Fix peripheral smoke defaults
+d268457 Improve CSI camera diagnostics
 ```
 
 Latest result summary:
@@ -118,6 +118,59 @@ Latest USB regression report:
 
 ```text
 /tmp/embedverify-usb-regression-reports/20260604T034358Z_fdf994422bb1_passed/report.json
+```
+
+## Connected Peripherals
+
+Implemented but not yet all passing on current hardware configuration:
+
+```text
+suite: suites/connected_peripherals_smoke.yaml
+cases: wireless_basic, display_hdmi, csi_camera, uart_loopback
+functions:
+  wifi.detect / wifi.scan
+  bluetooth.detect / bluetooth.scan
+  display.detect
+  camera.detect / camera.capture_smoke
+  uart.list_ports / uart.loopback
+```
+
+Latest Jetson run:
+
+```text
+request_id: 31439b6282bf
+status: failed
+report: /tmp/embedverify-connected-reports/20260604T044600Z_31439b6282bf_failed/report.json
+```
+
+Passing portions:
+
+```text
+wifi.scan: 54 networks
+bluetooth.scan: 62 devices
+display.detect: subsystem_present=true, hdmi_audio_input_count=4
+```
+
+Current blockers:
+
+```text
+CSI: Argus provider unavailable / camera not available. Do not automate
+jetson-io.py inside Function. User should manually select the correct CSI
+camera overlay using jetson-io.py, reboot, then rerun csi_camera.
+
+UART: auto loopback tested /dev/ttyTHS1 and /dev/ttyTHS2; neither received the
+payload. User should confirm the exact J401 header UART pins and pinmux/device
+mapping before rerunning with a port override.
+```
+
+Regression after these code changes:
+
+```text
+usb_smoke passed:
+/tmp/embedverify-regression-reports/20260604T044728Z_5f2b1735a238_passed/report.json
+
+peripheral_smoke passed:
+/tmp/embedverify-regression-reports/20260604T044728Z_9380cade707a_passed/report.json
 ```
 
 ## Current SSD Caution

@@ -51,6 +51,17 @@ Additional read-only peripheral smoke coverage is available with:
 ev run suites/peripheral_smoke.yaml
 ```
 
+For hardware currently attached to the J401 carrier board, run:
+
+```bash
+ev run suites/connected_peripherals_smoke.yaml
+```
+
+`connected_peripherals_smoke` covers Wi-Fi/BT scan, HDMI/display subsystem
+detection, CSI camera Argus capture, and UART RX/TX loopback. CSI camera tests
+expect the correct Jetson camera device-tree overlay to be selected manually
+with `jetson-io.py` and the board rebooted before running the suite.
+
 The runner auto-detects the first USB storage device. If the selected partition
 is not mounted and the command is running as root, the write-speed test mounts it
 temporarily under `/mnt/embedverify-*`, writes `.ev_write_test.bin`, removes the
