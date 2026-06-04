@@ -1501,6 +1501,13 @@ class GenericUARTCapability:
         for candidate in candidates:
             attempt = _uart_loopback_attempt(candidate, payload=payload, baudrate=baudrate, timeout=timeout)
             attempts.append(attempt)
+            if attempt.get("error_type") == "missing_dependency":
+                return {
+                    "code": -2,
+                    "message": "pyserial is not installed",
+                    "details": {"port": candidate, "attempts": attempts},
+                    "metrics": {"matched": False, "attempt_count": len(attempts)},
+                }
             if attempt.get("matched"):
                 return {
                     "code": 0,
@@ -2276,65 +2283,61 @@ def _uart_ports(*, prefer_real_uart: bool = False) -> list[dict[str, Any]]:
 
 
 def _uart_loopback_attempt(port: str, *, payload: str, baudrate: int, timeout: float) -> dict[str, Any]:
-    import select
-    import termios
-
-    speed = _termios_speed(termios, baudrate)
     started = time.perf_counter()
     payload_bytes = payload.encode("utf-8")
-    if not payload_bytes.endswith(b"\n"):
-        payload_bytes += b"\n"
     try:
-        fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    except OSError as exc:
-        return {"port": port, "matched": False, "error": str(exc), "duration_ms": 0}
-    received = b""
-    try:
-        attrs = termios.tcgetattr(fd)
-        attrs[0] = 0
-        attrs[1] = 0
-        attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
-        attrs[3] = 0
-        attrs[4] = speed
-        attrs[5] = speed
-        attrs[6][termios.VMIN] = 0
-        attrs[6][termios.VTIME] = 0
-        termios.tcsetattr(fd, termios.TCSANOW, attrs)
-        termios.tcflush(fd, termios.TCIOFLUSH)
-        os.write(fd, payload_bytes)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            readable, _, _ = select.select([fd], [], [], 0.1)
-            if not readable:
-                continue
-            try:
-                chunk = os.read(fd, 1024)
-            except BlockingIOError:
-                chunk = b""
-            if chunk:
-                received += chunk
-                if payload_bytes in received:
-                    break
-    except OSError as exc:
+        import serial  # type: ignore
+    except ImportError:
         return {
             "port": port,
             "matched": False,
+            "payload": payload,
+            "received": None,
+            "error_type": "missing_dependency",
+            "error": "pyserial is not installed",
+            "duration_ms": 0,
+        }
+
+    try:
+        read_timeout = max(0.01, min(0.1, timeout))
+        with (
+            serial.Serial(port, baudrate=baudrate, timeout=read_timeout) as reader,
+            serial.Serial(port, baudrate=baudrate, timeout=timeout) as writer,
+        ):
+            reader.reset_input_buffer()
+            writer.reset_output_buffer()
+            writer.write(payload_bytes)
+            writer.flush()
+            deadline = time.monotonic() + timeout
+            received = b""
+            while time.monotonic() < deadline:
+                chunk = reader.read(max(1024, len(payload_bytes)))
+                if chunk:
+                    received += chunk
+                    if payload_bytes in received:
+                        break
+                    continue
+                time.sleep(min(0.01, read_timeout))
+    except Exception as exc:
+        return {
+            "port": port,
+            "matched": False,
+            "payload": payload,
+            "received": None,
+            "error_type": "io_error",
             "error": str(exc),
             "duration_ms": int((time.perf_counter() - started) * 1000),
         }
-    finally:
-        os.close(fd)
+
+    matched = received == payload_bytes
     return {
         "port": port,
-        "matched": payload_bytes in received,
+        "matched": matched,
         "payload": payload,
         "received": received.decode("utf-8", errors="replace"),
+        "received_hex": received.hex(),
         "duration_ms": int((time.perf_counter() - started) * 1000),
     }
-
-
-def _termios_speed(termios_module: Any, baudrate: int) -> int:
-    return int(getattr(termios_module, f"B{baudrate}", termios_module.B115200))
 
 
 def _safe_int(value: Any) -> int | None:

@@ -29,6 +29,7 @@ Linux zzd-desktop 5.15.185-tegra ... aarch64
 cd /home/zzd/EmbedVerify
 echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/connected_peripherals_smoke.yaml --reports-dir /tmp/embedverify-csi-hdmi-reports
 echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/peripheral_smoke.yaml --reports-dir /tmp/embedverify-regression-reports
+echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run-case cases/uart_loopback.yaml --reports-dir /tmp/embedverify-uart-reports
 ```
 
 ## Latest Passing Reports
@@ -36,6 +37,7 @@ echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/p
 ```text
 /tmp/embedverify-csi-hdmi-reports/20260604T061819Z_e32936d76393_passed/report.json
 /tmp/embedverify-regression-reports/20260604T062040Z_f2dc71838b8a_passed/report.json
+/tmp/embedverify-uart-reports/20260604T082952Z_1d75e50916cb_passed/report.json
 
 USB storage baseline, only valid when a USB mass-storage disk is attached:
 /home/zzd/EmbedVerify/reports/20260604T023629Z_ce9ef4515ed8_passed/report.json
@@ -62,6 +64,11 @@ display.detect: DP-1 connected primary 1024x600
 camera.capture_smoke: capture_ok=true
 
 peripheral_smoke: passed
+
+uart_loopback standalone case: passed
+uart port: /dev/ttyTHS1
+uart payload: EVUART1
+uart report: /tmp/embedverify-uart-reports/20260604T082952Z_1d75e50916cb_passed/report.json
 
 USB storage baseline, from earlier run with USB storage attached:
 USB storage: Realtek RTL9210 M.2 NVME Adapter
@@ -175,9 +182,14 @@ CSI: The user manually selected the camera overlay with jetson-io.py and
 rebooted. Keep this as a manual precondition. Do not automate jetson-io.py
 inside a normal Function.
 
-UART: Keep cases/uart_loopback.yaml available but out of
-connected_peripherals_smoke until the user confirms the exact J401 header UART
-pins and Linux device mapping.
+UART: /dev/ttyTHS1 maps to Jetson Orin UART1 / 0x3100000.serial. Standalone
+cases/uart_loopback.yaml passed with payload EVUART1. Keep it out of
+connected_peripherals_smoke until the user re-approves adding UART back to the
+default attached-device suite.
+
+UART limitation: payloads of 1-7 bytes passed in the current setup; payloads of
+8 bytes or more produced NUL-prefixed data. Treat this as a separate UART
+stress/driver investigation, not the basic smoke signal.
 ```
 
 Regression after CSI/HDMI stabilization:

@@ -26,7 +26,7 @@ functions:
     save_output: true
     params:
       port: auto
-      payload: EV_UART_LOOPBACK
+      payload: EVUART1
       baudrate: 115200
       timeout: 2.0
     expect:

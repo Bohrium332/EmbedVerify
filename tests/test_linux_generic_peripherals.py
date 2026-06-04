@@ -1,4 +1,5 @@
 import json
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +11,7 @@ from embedverify.capabilities.linux_generic import (
     GenericI2CCapability,
     GenericNetworkCapability,
     GenericPCIeNVMeCapability,
+    GenericUARTCapability,
     GenericWiFiCapability,
     _parse_bluetooth_controller,
     _parse_bluetooth_devices,
@@ -242,6 +244,57 @@ class LinuxGenericPeripheralTests(unittest.TestCase):
 
         self.assertEqual(result["code"], 0)
         self.assertEqual(result["metrics"]["connected_count"], 1)
+
+    def test_uart_loopback_uses_pyserial_payload_length(self):
+        opens = []
+        writes = []
+        reads = []
+
+        class FakeSerialHandle:
+            def __init__(self, port, *, baudrate, timeout):
+                self.port = port
+                self.baudrate = baudrate
+                self.timeout = timeout
+                opens.append((port, baudrate, timeout))
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def reset_input_buffer(self):
+                pass
+
+            def reset_output_buffer(self):
+                pass
+
+            def write(self, data):
+                writes.append(data)
+
+            def flush(self):
+                pass
+
+            def read(self, size):
+                reads.append(size)
+                return writes[-1]
+
+        fake_serial = types.SimpleNamespace(Serial=FakeSerialHandle)
+
+        with patch.dict("sys.modules", {"serial": fake_serial}):
+            result = GenericUARTCapability().loopback(
+                port="/dev/ttyTHS1",
+                payload="EV_UART_LOOPBACK",
+                baudrate=115200,
+                timeout=2,
+            )
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(opens, [("/dev/ttyTHS1", 115200, 0.1), ("/dev/ttyTHS1", 115200, 2)])
+        self.assertEqual(writes, [b"EV_UART_LOOPBACK"])
+        self.assertEqual(reads, [1024])
+        self.assertEqual(result["details"]["attempts"][0]["received"], "EV_UART_LOOPBACK")
+        self.assertNotIn("status", result)
 
     def test_peripheral_suite_dry_run_loads(self):
         report = SuiteRunner(ROOT).run("suites/peripheral_smoke.yaml", dry_run=True)

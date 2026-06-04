@@ -49,6 +49,9 @@
   confirmed.
 - Added board/platform porting notes for adding Jetson, RK, or later Linux
   boards without changing Function output contracts.
+- Verified standalone UART loopback on `/dev/ttyTHS1` after confirming the
+  J401 UART1 mapping. The smoke payload is `EVUART1` because the current setup
+  shows abnormal NUL-prefixed data for payloads of 8 bytes or longer.
 
 ## Latest USB Storage Passing Metrics
 
@@ -81,6 +84,12 @@ CSI capture: capture_ok=true
 peripheral suite: passed
 peripheral request_id: f2dc71838b8a
 peripheral report dir: /tmp/embedverify-regression-reports/20260604T062040Z_f2dc71838b8a_passed
+
+uart case: passed
+uart request_id: 1d75e50916cb
+uart report dir: /tmp/embedverify-uart-reports/20260604T082952Z_1d75e50916cb_passed
+uart port: /dev/ttyTHS1
+uart payload: EVUART1
 ```
 
 ## Latest SSD Investigation
@@ -219,7 +228,38 @@ Current suite scope:
 ```text
 included: wireless_basic, display_hdmi, csi_camera
 paused: uart_loopback
-reason: user requested UART not to be tested yet
+reason: keep UART as a standalone hardware case until the suite scope is
+re-approved
+```
+
+## Latest UART Loopback
+
+```text
+date: 2026-06-04
+board: recomputer_j401
+case: uart_loopback
+request_id: 1d75e50916cb
+report_status: passed
+report dir: /tmp/embedverify-uart-reports/20260604T082952Z_1d75e50916cb_passed
+port: /dev/ttyTHS1
+payload: EVUART1
+baudrate: 115200
+```
+
+Passed functions:
+
+```text
+uart.list_ports: code=0, 6 UART/serial ports found
+uart.loopback: code=0, matched=true, duration around 117 ms
+```
+
+Observed limitation:
+
+```text
+payload length 1-7 bytes: loopback smoke passed
+payload length >=8 bytes: current setup produced NUL-prefixed data
+next action: track as a separate UART stress/driver investigation, not as the
+smoke pass/fail signal
 ```
 
 Regression after CSI/HDMI stabilization:
@@ -248,8 +288,8 @@ reason: no USB mass-storage disk was detected in the current attached-device set
 
 ## Round After Next
 
-- Confirm UART pinmux/device mapping, then run `cases/uart_loopback.yaml` as a
-  standalone hardware case.
+- Decide whether to add `cases/uart_loopback.yaml` back into
+  `connected_peripherals_smoke`, now that standalone UART smoke passed.
 - Add the next hardware protocol only after the required external fixture is
   available, for example CAN transceiver/loopback or SPI/I2S wiring.
 - Start validating a second board by adding a board YAML first, then run
