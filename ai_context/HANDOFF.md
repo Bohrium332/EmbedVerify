@@ -41,7 +41,7 @@ echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/u
 Latest validated commit:
 
 ```text
-b7e708d Document USB review chain completion
+8786ab8 Fix peripheral smoke defaults
 ```
 
 Latest result summary:
@@ -97,6 +97,27 @@ Local verification passed:
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 PYTHONPATH=src python3 -m embedverify.cli.main run suites/peripheral_smoke.yaml --dry-run
+```
+
+Jetson verification passed:
+
+```bash
+cd /home/zzd/EmbedVerify
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/peripheral_smoke.yaml --reports-dir /tmp/embedverify-peripheral-reports
+echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/usb_smoke.yaml --file-size-mb 1 --reports-dir /tmp/embedverify-usb-regression-reports
+```
+
+Latest peripheral report:
+
+```text
+/tmp/embedverify-peripheral-reports/20260604T034332Z_d5db47342266_passed/report.json
+```
+
+Latest USB regression report:
+
+```text
+/tmp/embedverify-usb-regression-reports/20260604T034358Z_fdf994422bb1_passed/report.json
 ```
 
 ## Current SSD Caution

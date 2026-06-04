@@ -120,10 +120,49 @@ saved outputs: 6 function output JSON files
 report text format: code=<value>, no Function status field
 ```
 
+## Latest Peripheral Smoke
+
+```text
+date: 2026-06-04
+board: recomputer_j401
+suite: peripheral_smoke
+request_id: d5db47342266
+report_status: passed
+report dir: /tmp/embedverify-peripheral-reports/20260604T034332Z_d5db47342266_passed
+```
+
+Passed functions:
+
+```text
+network.list_interfaces: 6 non-loopback interfaces found
+network.link_status: eth0 up, 1000 Mbps, carrier=true
+network.ping: gateway 192.168.4.2, 2/2 packets, avg 0.953 ms
+pcie_nvme.detect: /dev/nvme0n1, 128 GB NVMe detected
+rtc.list_devices: /dev/rtc, /dev/rtc0, /dev/rtc1 detected
+rtc.read: hwclock read succeeded
+fan.info: pwmfan + pwm_tach detected, max_rpm around 1723
+gpio.list_chips: gpiochip0/gpiochip1 detected, 196 lines total
+gpio.line_info: gpioinfo for /dev/gpiochip0 succeeded
+i2c.list_buses: 7 buses detected
+i2c.scan: bus 7 scan completed, 0 devices found
+```
+
+USB regression after peripheral changes also passed:
+
+```text
+suite: usb_smoke
+request_id: fdf994422bb1
+report_status: passed
+report dir: /tmp/embedverify-usb-regression-reports/20260604T034358Z_fdf994422bb1_passed
+file_size_mb: 1
+usb storage: /dev/sda, Realtek RTL9210, 10G
+integrity_match: true
+auto mount cleanup: /mnt/embedverify-sda not mounted after run
+```
+
 ## Next Round
 
-- Apply the first-batch peripheral commit to the Jetson and run:
-  `network`, `pcie_nvme`, `rtc`, `fan`, `gpio`, and `i2c` Function/Case checks.
+- Push the verified peripheral commits after final local status checks.
 - Keep USB as the regression baseline while expanding peripheral coverage.
 
 ## Round After Next
