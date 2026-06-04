@@ -37,6 +37,16 @@ metadata:
   family: Jetson
 ```
 
+## Naming Rules
+
+- `name` is the stable id used by `--board` and `config.yaml`.
+- Use lowercase letters, numbers, and underscores, for example
+  `recomputer_j401` or `rk3576_evb`.
+- Do not encode temporary fixture state in the board name. Attached hardware
+  belongs in Case/Suite selection or parameters.
+- Keep example profiles under `boards/examples/`; supported profiles live
+  directly under `boards/`.
+
 ## Capability Rules
 
 - The key under `capabilities` is the Function-facing capability name.
@@ -62,13 +72,25 @@ metadata:
 3. Add interface names that describe board resources, not Linux implementation
    details only.
 4. Add required tools so target bootstrap checks are explicit.
-5. Run at least dry-run first:
+5. Record any external fixture assumptions, such as CSI overlay selected, UART
+   RX/TX shorted, CAN loopback adapter attached, or USB storage inserted.
+6. Run at least dry-run first:
 
 ```bash
 PYTHONPATH=src python3 -m embedverify.cli.main run suites/peripheral_smoke.yaml --board <board_name> --dry-run
 ```
 
-6. Run the smallest real case before running broad suites.
+7. Run the smallest real case before running broad suites.
+
+Recommended verification ladder:
+
+```text
+profile loads
+-> suite dry-run
+-> one read-only case
+-> one attached-device case
+-> full suite
+```
 
 ## When To Add A New Capability Implementation
 
@@ -83,3 +105,15 @@ avoid: Fixture decides whether camera commands are Jetson or RK commands
 ```
 
 The dispatch point is the capability registry, not a Fixture layer.
+
+## Review Checklist
+
+Before asking another engineer to review a new board profile:
+
+```text
+Function output remains code/message/details/metrics
+board selection works from --board and config.yaml
+suite files remain board-neutral
+external fixture assumptions are written down
+first hardware report path is recorded in ai_context/PROGRESS.md
+```

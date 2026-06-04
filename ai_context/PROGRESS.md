@@ -42,8 +42,15 @@
   `wifi`, `bluetooth`, `display`, `camera`, and `uart`.
 - Added `suites/connected_peripherals_smoke.yaml` plus cases:
   `wireless_basic`, `display_hdmi`, `csi_camera`, and `uart_loopback`.
+- Stabilized the attached-device smoke suite after the user manually selected
+  the CSI camera overlay with `jetson-io.py` and rebooted.
+- Kept UART loopback as an independent case, but removed it from
+  `connected_peripherals_smoke` until the exact header UART mapping is
+  confirmed.
+- Added board/platform porting notes for adding Jetson, RK, or later Linux
+  boards without changing Function output contracts.
 
-## Latest Passing Metrics
+## Latest USB Storage Passing Metrics
 
 ```text
 board: recomputer_j401
@@ -54,6 +61,26 @@ read_speed_mbps: 720.0
 write_speed_mbps: 445.0
 integrity_match: true
 latest report dir: /home/zzd/EmbedVerify/reports/20260604T023629Z_ce9ef4515ed8_passed
+```
+
+This USB storage baseline requires a USB mass-storage disk. It is not expected
+to pass when only USB hub/input/Bluetooth devices are attached.
+
+## Latest Attached Peripheral Passing Metrics
+
+```text
+board: recomputer_j401
+connected suite: passed
+connected request_id: e32936d76393
+connected report dir: /tmp/embedverify-csi-hdmi-reports/20260604T061819Z_e32936d76393_passed
+wifi networks: 82
+bluetooth devices: 85
+display connector: DP-1 connected primary 1024x600
+CSI capture: capture_ok=true
+
+peripheral suite: passed
+peripheral request_id: f2dc71838b8a
+peripheral report dir: /tmp/embedverify-regression-reports/20260604T062040Z_f2dc71838b8a_passed
 ```
 
 ## Latest SSD Investigation
@@ -170,58 +197,60 @@ auto mount cleanup: /mnt/embedverify-sda not mounted after run
 date: 2026-06-04
 board: recomputer_j401
 suite: connected_peripherals_smoke
-request_id: 31439b6282bf
-report_status: failed
-report dir: /tmp/embedverify-connected-reports/20260604T044600Z_31439b6282bf_failed
+request_id: e32936d76393
+report_status: passed
+report dir: /tmp/embedverify-csi-hdmi-reports/20260604T061819Z_e32936d76393_passed
 ```
 
 Passed:
 
 ```text
 wifi.detect: wlan0 detected
-wifi.scan: 54 networks found
+wifi.scan: 82 networks found
 bluetooth.detect: hci0 controller powered
-bluetooth.scan: 62 devices found
-display.detect: display/HDMI subsystem present, HDMI audio inputs detected
+bluetooth.scan: 85 devices found
+display.detect: DP-1 connected at 1024x600, connected_count=1
+camera.detect: NvArgus plugin available, /dev/media0 plus /dev/video0 and /dev/video1 detected
+camera.capture_smoke: one-frame Argus capture succeeded, duration around 1767 ms
 ```
 
-Failed / blocked by hardware configuration:
+Current suite scope:
 
 ```text
-csi_camera:
-  camera.detect code=-1
-  message: CSI camera provider unavailable; check nvargus-daemon and camera device-tree overlay
-  plugin_available=true, media_device_count=1, video_device_count=0, capture_ok=false
-  next action: manually use jetson-io.py to select the correct CSI camera overlay, reboot, then rerun.
-
-uart_loopback:
-  uart.list_ports found 6 serial nodes
-  uart.loopback code=-1
-  candidates tested: /dev/ttyTHS1, /dev/ttyTHS2
-  both ports received no loopback payload
-  next action: confirm which J401 header UART is shorted and whether pinmux maps it to ttyTHS1 or ttyTHS2.
+included: wireless_basic, display_hdmi, csi_camera
+paused: uart_loopback
+reason: user requested UART not to be tested yet
 ```
 
-Regression after connected peripheral changes:
+Regression after CSI/HDMI stabilization:
 
 ```text
-usb_smoke: passed, request_id=5f2b1735a238
-report dir: /tmp/embedverify-regression-reports/20260604T044728Z_5f2b1735a238_passed
+local unit tests: 38/38 passed
+local dry-run: connected_peripherals_smoke passed
+Jetson unit tests: 38/38 passed
 
-peripheral_smoke: passed, request_id=9380cade707a
-report dir: /tmp/embedverify-regression-reports/20260604T044728Z_9380cade707a_passed
+peripheral_smoke: passed, request_id=f2dc71838b8a
+report dir: /tmp/embedverify-regression-reports/20260604T062040Z_f2dc71838b8a_passed
+
+usb_smoke: failed by current hardware precondition, request_id=9eafba4d3382
+report dir: /tmp/embedverify-regression-reports/20260604T061958Z_9eafba4d3382_failed
+reason: no USB mass-storage disk was detected in the current attached-device setup
 ```
 
 ## Next Round
 
-- Push the verified peripheral commits after final local status checks.
-- Push the connected peripheral implementation after final local status checks.
-- Keep USB and `peripheral_smoke` as regression baselines while expanding coverage.
+- Push the verified CSI/HDMI stabilization and documentation update after
+  final local status checks.
+- Keep USB as a regression baseline only when a USB mass-storage device is
+  actually attached.
+- Keep `peripheral_smoke` and `connected_peripherals_smoke` as the current
+  non-UART review baselines.
 
 ## Round After Next
 
-- Decide which second-batch interfaces have hardware attached: CAN/CAN FD,
-  UART loopback, CSI camera, M.2 Key E Wi-Fi/BT, HDMI display, SPI/PWM/I2S.
-- After the user runs jetson-io.py and reboots, rerun `cases/csi_camera.yaml`.
-- After the user confirms the exact shorted UART header pins, rerun
-  `cases/uart_loopback.yaml` with `port` override if needed.
+- Confirm UART pinmux/device mapping, then run `cases/uart_loopback.yaml` as a
+  standalone hardware case.
+- Add the next hardware protocol only after the required external fixture is
+  available, for example CAN transceiver/loopback or SPI/I2S wiring.
+- Start validating a second board by adding a board YAML first, then run
+  dry-run, one case, and one suite in that order.

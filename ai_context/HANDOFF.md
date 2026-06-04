@@ -23,33 +23,47 @@ The board is Jetson/Tegra, not RK:
 Linux zzd-desktop 5.15.185-tegra ... aarch64
 ```
 
-## Latest Passing Command
+## Latest Passing Commands
 
 ```bash
 cd /home/zzd/EmbedVerify
-echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/usb_smoke.yaml
+echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/connected_peripherals_smoke.yaml --reports-dir /tmp/embedverify-csi-hdmi-reports
+echo 1 | sudo -S env PYTHONPATH=src python3 -m embedverify.cli.main run suites/peripheral_smoke.yaml --reports-dir /tmp/embedverify-regression-reports
 ```
 
 ## Latest Passing Reports
 
 ```text
+/tmp/embedverify-csi-hdmi-reports/20260604T061819Z_e32936d76393_passed/report.json
+/tmp/embedverify-regression-reports/20260604T062040Z_f2dc71838b8a_passed/report.json
+
+USB storage baseline, only valid when a USB mass-storage disk is attached:
 /home/zzd/EmbedVerify/reports/20260604T023629Z_ce9ef4515ed8_passed/report.json
 /home/zzd/EmbedVerify/reports/20260604T023629Z_ce9ef4515ed8_passed/report.txt
 /home/zzd/EmbedVerify/reports/20260604T023629Z_ce9ef4515ed8_passed/outputs/
 ```
 
-Latest validated commit:
+Latest validated code commit:
 
 ```text
-d268457 Improve CSI camera diagnostics
+f8a3833 Stabilize CSI and HDMI smoke checks
 ```
 
 Latest result summary:
 
 ```text
-report_status: passed
 board: recomputer_j401
 Function result status fields: none
+
+connected_peripherals_smoke: passed
+wifi.scan: 82 networks
+bluetooth.scan: 85 devices
+display.detect: DP-1 connected primary 1024x600
+camera.capture_smoke: capture_ok=true
+
+peripheral_smoke: passed
+
+USB storage baseline, from earlier run with USB storage attached:
 USB storage: Realtek RTL9210 M.2 NVME Adapter
 USB speed: 10G
 storage layout: whole-disk ext4 on /dev/sda
@@ -122,55 +136,62 @@ Latest USB regression report:
 
 ## Connected Peripherals
 
-Implemented but not yet all passing on current hardware configuration:
+Implemented and passing for the hardware the user currently wants in the suite:
 
 ```text
 suite: suites/connected_peripherals_smoke.yaml
-cases: wireless_basic, display_hdmi, csi_camera, uart_loopback
+cases: wireless_basic, display_hdmi, csi_camera
 functions:
   wifi.detect / wifi.scan
   bluetooth.detect / bluetooth.scan
   display.detect
   camera.detect / camera.capture_smoke
-  uart.list_ports / uart.loopback
 ```
 
 Latest Jetson run:
 
 ```text
-request_id: 31439b6282bf
-status: failed
-report: /tmp/embedverify-connected-reports/20260604T044600Z_31439b6282bf_failed/report.json
+request_id: e32936d76393
+status: passed
+report: /tmp/embedverify-csi-hdmi-reports/20260604T061819Z_e32936d76393_passed/report.json
 ```
 
 Passing portions:
 
 ```text
-wifi.scan: 54 networks
-bluetooth.scan: 62 devices
-display.detect: subsystem_present=true, hdmi_audio_input_count=4
+wifi.detect: wlan0 detected
+wifi.scan: 82 networks
+bluetooth.detect: controller powered
+bluetooth.scan: 85 devices
+display.detect: DP-1 connected primary 1024x600, connected_count=1
+camera.detect: NvArgus plugin available, /dev/media0, /dev/video0, /dev/video1
+camera.capture_smoke: one-frame Argus capture passed
 ```
 
-Current blockers:
+Current non-suite hardware notes:
 
 ```text
-CSI: Argus provider unavailable / camera not available. Do not automate
-jetson-io.py inside Function. User should manually select the correct CSI
-camera overlay using jetson-io.py, reboot, then rerun csi_camera.
+CSI: The user manually selected the camera overlay with jetson-io.py and
+rebooted. Keep this as a manual precondition. Do not automate jetson-io.py
+inside a normal Function.
 
-UART: auto loopback tested /dev/ttyTHS1 and /dev/ttyTHS2; neither received the
-payload. User should confirm the exact J401 header UART pins and pinmux/device
-mapping before rerunning with a port override.
+UART: Keep cases/uart_loopback.yaml available but out of
+connected_peripherals_smoke until the user confirms the exact J401 header UART
+pins and Linux device mapping.
 ```
 
-Regression after these code changes:
+Regression after CSI/HDMI stabilization:
 
 ```text
-usb_smoke passed:
-/tmp/embedverify-regression-reports/20260604T044728Z_5f2b1735a238_passed/report.json
+local unit tests: 38/38 passed
+Jetson unit tests: 38/38 passed
 
 peripheral_smoke passed:
-/tmp/embedverify-regression-reports/20260604T044728Z_9380cade707a_passed/report.json
+/tmp/embedverify-regression-reports/20260604T062040Z_f2dc71838b8a_passed/report.json
+
+usb_smoke failed only because no USB mass-storage disk was attached in the
+current CSI/HDMI/Wi-Fi/BT setup:
+/tmp/embedverify-regression-reports/20260604T061958Z_9eafba4d3382_failed/report.json
 ```
 
 ## Current SSD Caution

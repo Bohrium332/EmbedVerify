@@ -58,9 +58,11 @@ ev run suites/connected_peripherals_smoke.yaml
 ```
 
 `connected_peripherals_smoke` covers Wi-Fi/BT scan, HDMI/display subsystem
-detection, CSI camera Argus capture, and UART RX/TX loopback. CSI camera tests
-expect the correct Jetson camera device-tree overlay to be selected manually
-with `jetson-io.py` and the board rebooted before running the suite.
+detection, and CSI camera Argus capture. UART loopback remains available as
+`cases/uart_loopback.yaml`, but it is not part of this suite until the exact
+header pins and Linux device mapping are confirmed. CSI camera tests expect the
+correct Jetson camera device-tree overlay to be selected manually with
+`jetson-io.py` and the board rebooted before running the suite.
 
 The runner auto-detects the first USB storage device. If the selected partition
 is not mounted and the command is running as root, the write-speed test mounts it
@@ -82,7 +84,7 @@ Install or verify these tools on the board:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3 python3-venv python3-pip usbutils util-linux coreutils hdparm iproute2 iputils-ping i2c-tools gpiod
+sudo apt-get install -y python3 python3-venv python3-pip usbutils util-linux coreutils hdparm iproute2 iputils-ping i2c-tools gpiod wireless-tools iw bluetooth bluez x11-xserver-utils gstreamer1.0-tools
 ```
 
 Or use the helper script from the repository root:
@@ -104,6 +106,11 @@ STORAGE_DEVICE=/dev/sdb MOUNT_POINT=/media/seeed/MY_USB scripts/run_usb_smoke.sh
 ```
 
 ## Add Another Board
+
+See `boards/README.md` and `ai_context/BOARD_PORTING_GUIDE.md` for the full
+porting rules. The short version is: add a board profile first, map each
+Function-facing capability to an implementation, dry-run one suite, then verify
+one real case on hardware before running a broad suite.
 
 Add a file under `boards/`, for example:
 
