@@ -25,7 +25,7 @@ functions:
     skip_on_fail: true
     save_output: true
     params:
-      bus: auto
+      bus: "7"
       min_device_count: 0
     expect:
       pass_policy: all

@@ -694,7 +694,7 @@ class GenericNetworkCapability:
                 },
             )
 
-        operstate = str(match.get("operstate") or "")
+        operstate = str(match.get("operstate") or "").lower()
         carrier = match.get("carrier")
         link_up = operstate == "up"
         carrier_ok = carrier is True or carrier is None
@@ -931,7 +931,7 @@ class GenericFanCapability:
         return {
             "code": 0 if success else -1,
             "message": (
-                f"found {len(fans)} fan hwmon entrie(s)"
+                f"found {len(fans)} fan hwmon entry(s)"
                 if success
                 else f"fan requirement not met: count={len(fans)}, max_rpm={max_rpm}"
             ),
@@ -1350,7 +1350,7 @@ def _parse_ip_addr_json(data: list[Any]) -> list[dict[str, Any]]:
         interfaces.append(
             {
                 "name": name,
-                "operstate": str(item.get("operstate") or ""),
+                "operstate": str(item.get("operstate") or "").lower(),
                 "mac_address": str(item.get("address") or ""),
                 "mtu": item.get("mtu"),
                 "flags": item.get("flags") if isinstance(item.get("flags"), list) else [],
@@ -1389,7 +1389,7 @@ def _interfaces_from_sysfs() -> list[dict[str, Any]]:
         interfaces.append(
             {
                 "name": name,
-                "operstate": _read_text(path / "operstate"),
+                "operstate": _read_text(path / "operstate").lower(),
                 "mac_address": _read_text(path / "address"),
                 "mtu": _read_int(path / "mtu"),
                 "flags": [],
